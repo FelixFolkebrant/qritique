@@ -5,10 +5,12 @@ export function Mark({
   annotation: a,
   group,
   selected = false,
+  dimmed = false,
 }: {
   annotation: Annotation;
   group: Group;
   selected?: boolean;
+  dimmed?: boolean;
 }) {
   const { x, y, width, height } = a.bounds;
   const color = group.color;
@@ -20,7 +22,7 @@ export function Mark({
     strokeOpacity: 0.85,
   };
   return (
-    <g data-annotation-id={a.id}>
+    <g data-annotation-id={a.id} opacity={dimmed ? 0.35 : 1}>
       {a.tool === 'polygon' ? (
         <path d={pathOf(a.points, true)} {...common} />
       ) : a.tool === 'pencil' ? (
@@ -70,11 +72,16 @@ export function Mark({
       )}
       {group.kind === 'number' && (
         <g transform={`translate(${x + Math.min(18, width / 2)},${y + Math.min(18, height / 2)})`}>
-          <circle r="13" fill="#323232" stroke="#ffffff" strokeWidth="1.3" />
+          <circle
+            r="13"
+            fill="var(--color-ui-mark-surface)"
+            stroke="var(--color-ui-mark-text)"
+            strokeWidth="1.3"
+          />
           <text
             textAnchor="middle"
             dominantBaseline="central"
-            fill="#ffffff"
+            fill="var(--color-ui-mark-text)"
             fontSize="16"
             fontFamily="Arial, sans-serif"
           >
@@ -89,7 +96,7 @@ export function Mark({
           width={width + 6}
           height={height + 6}
           fill="none"
-          stroke="white"
+          stroke="var(--color-ui-white)"
           strokeOpacity="0.85"
           strokeWidth="1"
           strokeDasharray="4 3"
@@ -114,8 +121,8 @@ export function Mark({
             y={cy! - 3}
             width="6"
             height="6"
-            fill="white"
-            stroke="#376be8"
+            fill="var(--color-ui-white)"
+            stroke="var(--color-ui-accent)"
             strokeWidth="1"
           />
         ))}

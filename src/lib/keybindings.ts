@@ -10,15 +10,20 @@ export const SHORTCUTS = {
   redo: { label: 'Redo markings', keys: ['Mod+Shift+z', 'Mod+y'] },
   delete: { label: 'Delete selected mark', keys: ['Delete', 'Backspace'] },
   finish: { label: 'Finish polygon', keys: ['Enter'] },
-  cancel: { label: 'Cancel / close', keys: ['Escape'] },
+  cancel: { label: 'Cancel', keys: ['Escape'] },
+  close: { label: 'Close', keys: ['Mod+Escape'] },
+  annotate: { label: 'Annotate current group', keys: ['c'] },
+  copyImage: { label: 'Copy image', keys: ['Mod+c'] },
+  copyNotes: { label: 'Copy notes', keys: ['Mod+Shift+c'] },
   smaller: { label: 'Decrease stroke size', keys: ['['] },
   larger: { label: 'Increase stroke size', keys: [']'] },
+  flipBrush: { label: 'Flip brush direction', keys: ['f'] },
   parent: { label: 'Inspect parent', keys: ['ArrowUp'] },
   child: { label: 'Inspect child', keys: ['ArrowDown'] },
-  numbers: { label: 'Toggle numbered notes', keys: ['#'] },
+  numbers: { label: 'Toggle numbered notes', keys: ['n'] },
   hide: { label: 'Hide / show existing markings', keys: ['h'] },
   clear: { label: 'Clear markings', keys: [] },
-  keybindings: { label: 'Open keybinds', keys: ['?'] },
+  keybindings: { label: 'Open settings', keys: ['?'] },
 } satisfies Record<string, { label: string; keys: string[] }>;
 
 export type ShortcutAction = keyof typeof SHORTCUTS;
@@ -34,9 +39,13 @@ export function readKeybindings(value: unknown): Keybindings {
   if (!value || typeof value !== 'object') return bindings;
   for (const action of shortcutActions) {
     const keys = (value as Record<string, unknown>)[action];
+    if (action === 'cancel') continue;
     if (Array.isArray(keys) && keys.every((key) => typeof key === 'string'))
-      bindings[action] = keys;
+      bindings[action] = keys.filter((key) => key !== 'Escape');
   }
+  const oldNumbers = (value as Record<string, unknown>).numbers;
+  if (Array.isArray(oldNumbers) && oldNumbers.length === 1 && oldNumbers[0] === '#')
+    bindings.numbers = ['n'];
   return bindings;
 }
 
@@ -58,8 +67,21 @@ export function shortcutFromEvent(
 
 export function shortcutLabel(shortcut: string): string {
   return shortcut
-    .replace('Mod+', 'Ctrl / ⌘ + ')
+    .replace('Mod+', /Mac/i.test(navigator.platform) ? '⌘+' : 'Ctrl+')
     .replaceAll('+', ' + ')
     .replace(/\s+/g, ' ')
     .replace(/\b[a-z]\b/g, (key) => key.toUpperCase());
 }
+
+export const shortcutCategories: { label: string; actions: ShortcutAction[] }[] = [
+  { label: 'Tools', actions: ['select', 'box', 'polygon', 'pencil', 'brush', 'inspect', 'move'] },
+  {
+    label: 'Editing',
+    actions: ['undo', 'redo', 'delete', 'finish', 'smaller', 'larger', 'flipBrush'],
+  },
+  { label: 'Notes & export', actions: ['annotate', 'numbers', 'copyImage', 'copyNotes'] },
+  {
+    label: 'Navigation & session',
+    actions: ['parent', 'child', 'hide', 'clear', 'keybindings', 'close'],
+  },
+];

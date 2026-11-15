@@ -1,14 +1,13 @@
 import {
   ArrowDownToLine,
-  ArrowLeftRight,
-  ArrowUpDown,
-  Brush,
   ChevronDown,
-  Hash,
+  ChevronRight,
+  ClipboardCheck,
   Image,
   List,
   MousePointer2,
   Move,
+  PaintbrushVertical,
   Pencil,
   Pentagon,
   Plus,
@@ -28,7 +27,9 @@ interface Props {
   keybindings: Keybindings;
   setTool(tool: Tool): void;
   groups: Group[];
+  exportGroups: Group[];
   activeGroupId: string;
+  newNumberSelected: boolean;
   selectGroup(group: Group): void;
   mode: Mode;
   setMode(mode: Mode): void;
@@ -37,6 +38,8 @@ interface Props {
   removeColor(id: string): void;
   note: string;
   showNote: boolean;
+  focusNote: number;
+  onNoteBlur(): void;
   setNote(note: string): void;
   menu: Menu;
   setMenu(menu: Menu): void;
@@ -45,6 +48,9 @@ interface Props {
   orientation: 'horizontal' | 'vertical';
   setOrientation(orientation: 'horizontal' | 'vertical'): void;
   exporting: boolean;
+  copied: 'image' | 'notes' | null;
+  scope: ExportScope;
+  setScope(scope: ExportScope): void;
   onExport(action: 'image' | 'notes' | 'save', scope: ExportScope): void;
 }
 
@@ -52,9 +58,14 @@ export function Toolbar(props: Props) {
   const { tool, setTool, groups, activeGroupId, selectGroup, mode, setMode, menu, setMenu } = props;
   const [shape, setShape] = useState<'box' | 'polygon'>('box');
   const [draw, setDraw] = useState<'pencil' | 'brush'>('pencil');
-  const [scope, setScope] = useState<ExportScope>('all');
+  const [filterMenu, setFilterMenu] = useState<'color' | 'number' | null>(null);
+  const { scope, setScope } = props;
   const colorInput = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const notePanel = useRef<HTMLDivElement>(null);
+  const previousGroupId = useRef(activeGroupId);
+  const addColor = useRef(props.addColor);
+  addColor.current = props.addColor;
   const shortcut = (action: ShortcutAction) =>
     props.keybindings[action].map(shortcutLabel).join(' / ');
   const toolTitle = (label: string, action: ShortcutAction) =>
@@ -64,7 +75,14 @@ export function Toolbar(props: Props) {
   const shapeActive = tool === 'box' || tool === 'polygon';
   const drawActive = tool === 'pencil' || tool === 'brush';
   const ShapeIcon = shape === 'box' ? Square : Pentagon;
-  const DrawIcon = draw === 'pencil' ? Pencil : Brush;
+  const DrawIcon = draw === 'pencil' ? Pencil : PaintbrushVertical;
+  useEffect(() => {
+    const input = colorInput.current;
+    if (!input) return;
+    const onChange = () => addColor.current(input.value);
+    input.addEventListener('change', onChange);
+    return () => input.removeEventListener('change', onChange);
+  }, []);
   useEffect(() => {
     if (tool === 'box' || tool === 'polygon') setShape(tool);
     if (tool === 'pencil' || tool === 'brush') setDraw(tool);
@@ -76,9 +94,41 @@ export function Toolbar(props: Props) {
       textarea.current.style.height = `${Math.min(160, textarea.current.scrollHeight)}px`;
   }, [props.note, props.showNote]);
   useEffect(() => {
-    if (scope !== 'all' && scope !== 'number' && !groups.some((group) => group.id === scope))
-      setScope('all');
-  }, [groups, scope]);
+    if (props.focusNote) textarea.current?.focus();
+  }, [props.focusNote]);
+  useEffect(() => {
+    const changed = previousGroupId.current !== activeGroupId;
+    previousGroupId.current = activeGroupId;
+    if (
+      !changed ||
+      !props.showNote ||
+      !notePanel.current ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    )
+      return;
+    const animation = notePanel.current.animate(
+      [
+        { transform: 'translateY(0)' },
+        { transform: 'translateY(2px)', offset: 0.4 },
+        { transform: 'translateY(0)' },
+      ],
+      { duration: 140, easing: 'ease-out' },
+    );
+    return () => animation.cancel();
+  }, [activeGroupId, props.showNote]);
+  useEffect(() => {
+    if (scope === 'all') return;
+    const remaining = scope.filter((id) => props.exportGroups.some((group) => group.id === id));
+    if (remaining.length !== scope.length) setScope(remaining.length ? remaining : 'all');
+  }, [props.exportGroups, scope, setScope]);
+  useEffect(() => {
+    if (menu !== 'export') setFilterMenu(null);
+  }, [menu]);
+  const toggleFilter = (id: string) => {
+    const selected = scope === 'all' ? [] : scope;
+    const next = selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id];
+    setScope(next.length ? next : 'all');
+  };
   const toggleMenu = (next: Menu) => setMenu(menu === next ? null : next);
   const choose = (next: Tool) => {
     setTool(next);
@@ -87,7 +137,7 @@ export function Toolbar(props: Props) {
   return (
     <div className="dock" data-qritique-ui="" onPointerDown={(event) => event.stopPropagation()}>
       {props.showNote && (
-        <div className="note-panel panel">
+        <div ref={notePanel} className="note-panel panel">
           <textarea
             ref={textarea}
             aria-label="Note for selected group"
@@ -100,8 +150,13 @@ export function Toolbar(props: Props) {
               event.target.style.height = 'auto';
               event.target.style.height = `${Math.min(160, event.target.scrollHeight)}px`;
             }}
+            onBlur={props.onNoteBlur}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') {
+              if (
+                event.key === 'Escape' ||
+                (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing)
+              ) {
+                event.preventDefault();
                 event.stopPropagation();
                 textarea.current?.blur();
               }
@@ -115,9 +170,12 @@ export function Toolbar(props: Props) {
             <button
               type="button"
               key={group.id}
-              className={cn('number-button', activeGroupId === group.id && 'selected')}
+              className={cn(
+                'number-button',
+                activeGroupId === group.id && !props.newNumberSelected && 'selected',
+              )}
               aria-label={`Note ${group.label}`}
-              aria-pressed={activeGroupId === group.id}
+              aria-pressed={activeGroupId === group.id && !props.newNumberSelected}
               onClick={() => selectGroup(group)}
             >
               {group.label}
@@ -125,8 +183,9 @@ export function Toolbar(props: Props) {
           ))}
           <button
             type="button"
-            className="add-number"
+            className={cn('add-number', props.newNumberSelected && 'selected')}
             aria-label="Add numbered note"
+            aria-pressed={props.newNumberSelected}
             onClick={props.addNumber}
           >
             <Plus size={14} />
@@ -192,7 +251,7 @@ export function Toolbar(props: Props) {
             </div>
           )}
         </div>
-        <div className="tool-menu-anchor">
+        <div className="tool-menu-anchor draw-menu-anchor">
           <div className={cn('split-button', drawActive && 'is-active')}>
             <Button
               active={drawActive}
@@ -213,60 +272,85 @@ export function Toolbar(props: Props) {
             </button>
           </div>
           {menu === 'draw' && (
-            <div className="menu panel draw-menu" role="menu" aria-label="Drawing tools">
-              <Button
-                size="menu"
-                active={draw === 'brush'}
-                role="menuitem"
-                onClick={() => {
-                  setDraw('brush');
-                  choose('brush');
-                }}
-              >
-                <Brush size={18} />
-                Brush
-              </Button>
-              <Button
-                size="menu"
-                active={draw === 'pencil'}
-                role="menuitem"
-                onClick={() => {
-                  setDraw('pencil');
-                  choose('pencil');
-                }}
-              >
-                <Pencil size={18} />
-                Pencil
-              </Button>
-              <div className="size-control">
-                <input
-                  type="range"
-                  min="2"
-                  max="140"
-                  value={props.size}
-                  aria-label="Stroke size"
-                  onChange={(event) => props.setSize(Number(event.target.value))}
-                />
-                <span>{props.size}</span>
+            <div className="menu panel draw-menu">
+              <div className="draw-tools" role="menu" aria-label="Drawing tools">
+                {(['brush', 'pencil'] as const).map((drawingTool) => {
+                  const Icon = drawingTool === 'brush' ? PaintbrushVertical : Pencil;
+                  const selected = draw === drawingTool;
+                  return (
+                    <Button
+                      key={drawingTool}
+                      size="menu"
+                      active={selected}
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      aria-controls="drawing-settings"
+                      onClick={() => {
+                        setDraw(drawingTool);
+                        setTool(drawingTool);
+                      }}
+                    >
+                      <Icon size={19} />
+                      {drawingTool === 'brush' ? 'Brush' : 'Pencil'}
+                      {selected && <ChevronRight size={12} className="draw-settings-indicator" />}
+                    </Button>
+                  );
+                })}
               </div>
-              <fieldset className="orientation-control" aria-label="Brush orientation">
-                <Button
-                  active={props.orientation === 'horizontal'}
-                  title="Horizontal brush"
-                  aria-label="Horizontal brush"
-                  onClick={() => props.setOrientation('horizontal')}
-                >
-                  <ArrowLeftRight size={17} />
-                </Button>
-                <Button
-                  active={props.orientation === 'vertical'}
-                  title="Vertical brush"
-                  aria-label="Vertical brush"
-                  onClick={() => props.setOrientation('vertical')}
-                >
-                  <ArrowUpDown size={17} />
-                </Button>
-              </fieldset>
+              <section
+                id="drawing-settings"
+                className="draw-settings"
+                aria-label={`${draw === 'brush' ? 'Brush' : 'Pencil'} settings`}
+              >
+                <div className="size-control">
+                  <label className="draw-setting-label" htmlFor="stroke-size">
+                    Size
+                    <span className="stroke-size-value">
+                      {props.size}
+                      <span>px</span>
+                    </span>
+                  </label>
+                  <input
+                    id="stroke-size"
+                    type="range"
+                    min="2"
+                    max="140"
+                    value={props.size}
+                    style={
+                      {
+                        '--size-progress': `${((props.size - 2) / 138) * 100}%`,
+                      } as React.CSSProperties
+                    }
+                    aria-label="Stroke size"
+                    aria-valuetext={`${props.size} pixels`}
+                    onChange={(event) => props.setSize(Number(event.target.value))}
+                  />
+                </div>
+                {draw === 'brush' && (
+                  <fieldset className="orientation-control" aria-label="Brush orientation">
+                    <span
+                      className="draw-setting-label"
+                      title={`${toolTitle('Flip brush direction', 'flipBrush')} · Right-click when not drawing`}
+                    >
+                      Direction
+                    </span>
+                    <div className="orientation-options">
+                      {(['horizontal', 'vertical'] as const).map((orientation) => (
+                        <Button
+                          key={orientation}
+                          active={props.orientation === orientation}
+                          title={`${orientation === 'horizontal' ? 'Horizontal' : 'Vertical'} brush`}
+                          aria-label={`${orientation === 'horizontal' ? 'Horizontal' : 'Vertical'} brush`}
+                          aria-pressed={props.orientation === orientation}
+                          onClick={() => props.setOrientation(orientation)}
+                        >
+                          <span aria-hidden="true" className={`orientation-mark ${orientation}`} />
+                        </Button>
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
+              </section>
             </div>
           )}
         </div>
@@ -292,53 +376,52 @@ export function Toolbar(props: Props) {
           </span>
         </Button>
         <span className="divider" />
-        {colors.length > 0 && (
-          <fieldset className="palette" aria-label="Annotation colors">
-            {colors.map((group) => (
-              <div className="color-swatch" key={group.id}>
+        <fieldset className="palette" aria-label="Annotation colors">
+          {colors.map((group) => (
+            <div className="color-swatch" key={group.id}>
+              <button
+                type="button"
+                className={cn(
+                  'color-button',
+                  mode === 'color' && activeGroupId === group.id && 'selected',
+                )}
+                style={{ '--swatch': group.color } as React.CSSProperties}
+                aria-label={group.label}
+                title={group.label}
+                aria-pressed={mode === 'color' && activeGroupId === group.id}
+                onClick={() => selectGroup(group)}
+              />
+              {mode === 'color' && activeGroupId === group.id && (
                 <button
                   type="button"
-                  className={cn(
-                    'color-button',
-                    mode === 'color' && activeGroupId === group.id && 'selected',
-                  )}
-                  style={{ '--swatch': group.color } as React.CSSProperties}
-                  aria-label={group.label}
-                  title={group.label}
-                  aria-pressed={mode === 'color' && activeGroupId === group.id}
-                  onClick={() => selectGroup(group)}
-                />
-                {mode === 'color' && activeGroupId === group.id && (
-                  <button
-                    type="button"
-                    className="delete-color"
-                    aria-label={`Delete color ${group.color}`}
-                    title="Delete color and its markings"
-                    onClick={() => props.removeColor(group.id)}
-                  >
-                    <X size={10} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </fieldset>
-        )}
-        <button
-          type="button"
-          className="add-color"
-          title="Add color"
-          aria-label="Add color"
-          onClick={() => colorInput.current?.click()}
-        >
-          <Plus size={12} />
-        </button>
+                  className="delete-color"
+                  aria-label={`Delete color ${group.color}`}
+                  title="Delete color and its markings"
+                  onClick={() => props.removeColor(group.id)}
+                >
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+          ))}
+          {colors.length < 5 && (
+            <button
+              type="button"
+              className="add-color"
+              title="Add color"
+              aria-label="Add color"
+              onClick={() => colorInput.current?.click()}
+            >
+              <Plus size={12} />
+            </button>
+          )}
+        </fieldset>
         <input
           className="hidden-color"
           ref={colorInput}
           type="color"
           aria-label="Custom color"
           defaultValue="#b14dff"
-          onChange={(event) => props.addColor(event.target.value)}
         />
         <button
           type="button"
@@ -348,7 +431,7 @@ export function Toolbar(props: Props) {
           aria-pressed={mode === 'number'}
           onClick={() => setMode(mode === 'number' ? 'color' : 'number')}
         >
-          <Hash size={19} />
+          1
         </button>
         <span className="divider" />
         <div className="tool-menu-anchor export-anchor">
@@ -360,7 +443,11 @@ export function Toolbar(props: Props) {
             disabled={props.exporting}
             onClick={() => toggleMenu('export')}
           >
-            <ArrowDownToLine size={25} />
+            {props.copied ? (
+              <ClipboardCheck size={25} className="copy-success" />
+            ) : (
+              <ArrowDownToLine size={25} />
+            )}
           </Button>
           {menu === 'export' && (
             <div className="menu panel export-menu" role="menu" aria-label="Export annotations">
@@ -369,41 +456,101 @@ export function Toolbar(props: Props) {
                   type="button"
                   className={cn('filter-all', scope === 'all' && 'selected')}
                   aria-pressed={scope === 'all'}
-                  onClick={() => setScope('all')}
+                  onClick={() => {
+                    setScope('all');
+                    setFilterMenu(null);
+                  }}
                 >
                   All
                 </button>
-                {colors.map((group) => (
-                  <button
-                    type="button"
-                    key={group.id}
-                    className={cn('filter-color', scope === group.id && 'selected')}
-                    style={{ '--swatch': group.color } as React.CSSProperties}
-                    aria-label={`Export ${group.label.toLowerCase()}`}
-                    aria-pressed={scope === group.id}
-                    onClick={() => setScope(group.id)}
-                  />
-                ))}
-                <button
-                  type="button"
-                  className={cn('filter-number', scope === 'number' && 'selected')}
-                  aria-label="Export numbered notes"
-                  aria-pressed={scope === 'number'}
-                  onClick={() => setScope('number')}
-                >
-                  <Hash size={12} />
-                </button>
+                {(['color', 'number'] as const).map((kind) => {
+                  const options = props.exportGroups.filter((group) => group.kind === kind);
+                  const selected =
+                    scope === 'all' ? [] : options.filter((group) => scope.includes(group.id));
+                  return (
+                    <div className="filter-anchor" key={kind}>
+                      <button
+                        type="button"
+                        className={cn('filter-trigger', selected.length > 0 && 'selected')}
+                        aria-label={kind === 'color' ? 'Filter colors' : 'Filter numbers'}
+                        aria-expanded={filterMenu === kind}
+                        disabled={!options.length}
+                        onClick={() => setFilterMenu(filterMenu === kind ? null : kind)}
+                      >
+                        {selected.length ? (
+                          <span className="filter-selection" aria-hidden="true">
+                            {selected.slice(0, 5).map((group, index) => (
+                              <span
+                                key={group.id}
+                                className={cn(
+                                  'filter-selection-item',
+                                  kind === 'color' && 'filter-selection-color',
+                                )}
+                                style={
+                                  kind === 'color'
+                                    ? ({ '--swatch': group.color } as React.CSSProperties)
+                                    : undefined
+                                }
+                              >
+                                {kind === 'number' &&
+                                  (index === 4 && selected.length > 5 ? '+' : group.label)}
+                              </span>
+                            ))}
+                          </span>
+                        ) : kind === 'color' ? (
+                          'Color'
+                        ) : (
+                          'Nums'
+                        )}
+                        <ChevronDown size={12} />
+                      </button>
+                      {filterMenu === kind && options.length > 0 && (
+                        <fieldset
+                          className="filter-options panel"
+                          aria-label={kind === 'color' ? 'Colors' : 'Numbers'}
+                        >
+                          {options.map((group) => (
+                            <button
+                              type="button"
+                              key={group.id}
+                              className={cn(
+                                'filter-option',
+                                kind === 'color' && 'filter-color-option',
+                              )}
+                              aria-label={kind === 'color' ? group.label : `#${group.label}`}
+                              aria-pressed={scope !== 'all' && scope.includes(group.id)}
+                              onClick={() => toggleFilter(group.id)}
+                            >
+                              {kind === 'color' && (
+                                <span
+                                  className="filter-swatch"
+                                  style={{ '--swatch': group.color } as React.CSSProperties}
+                                />
+                              )}
+                              {kind === 'number' && group.label}
+                            </button>
+                          ))}
+                        </fieldset>
+                      )}
+                    </div>
+                  );
+                })}
               </fieldset>
               <Button
                 role="menuitem"
                 size="menu"
-                title="Copy image · Shift-click to save PNG"
+                title={`${toolTitle('Copy image', 'copyImage')} · Shift-click to save PNG`}
                 onClick={(event) => props.onExport(event.shiftKey ? 'save' : 'image', scope)}
               >
                 <Image size={15} />
                 Copy image
               </Button>
-              <Button role="menuitem" size="menu" onClick={() => props.onExport('notes', scope)}>
+              <Button
+                role="menuitem"
+                size="menu"
+                title={toolTitle('Copy notes', 'copyNotes')}
+                onClick={() => props.onExport('notes', scope)}
+              >
                 <List size={15} />
                 Copy notes
               </Button>
@@ -411,6 +558,11 @@ export function Toolbar(props: Props) {
           )}
         </div>
       </div>
+      {props.copied && (
+        <span className="export-feedback panel" role="status">
+          Copied {props.copied}
+        </span>
+      )}
     </div>
   );
 }

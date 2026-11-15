@@ -29,10 +29,19 @@ import {
   shortcutFromEvent,
 } from '../lib/keybindings';
 import { newNumberGroup, normalizeSession } from '../lib/session';
-import type { Annotation, ExportScope, Group, Point, Session, Tool } from '../lib/types';
-import { KeybindingsDialog } from './KeybindingsDialog';
+import type { Theme } from '../lib/theme';
+import {
+  type Annotation,
+  defaultPalette,
+  type ExportScope,
+  type Group,
+  type Point,
+  type Session,
+  type Tool,
+} from '../lib/types';
 import { Mark } from './Marks';
 import { SessionMenu } from './SessionMenu';
+import { SettingsDialog } from './SettingsDialog';
 import { type Menu, Toolbar } from './Toolbar';
 
 interface Props {
@@ -56,12 +65,21 @@ export function App({ host, bridge, initial, onClose }: Props) {
   sessionRef.current = session;
   const history = useRef<{ past: Session[]; future: Session[] }>({ past: [], future: [] });
   const [tool, setToolState] = useState<Tool>('box');
+  const [newNumberSelected, setNewNumberSelected] = useState(false);
+  const newNumberSelectedRef = useRef(newNumberSelected);
+  newNumberSelectedRef.current = newNumberSelected;
+  const noteSelection = useRef<{ noteId: string; previousId: string } | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
   const [size, setSize] = useState(24);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [groupMenu, setGroupMenu] = useState(false);
-  const [keybindingsOpen, setKeybindingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>('system');
+  const [systemDark, setSystemDark] = useState(
+    () => matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  const [palette, setPalette] = useState(defaultPalette);
   const [keybindings, setKeybindings] = useState<Keybindings>(defaultKeybindings);
   const [resizeCursor, setResizeCursor] = useState<ResizeHandle | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -80,9 +98,15 @@ export function App({ host, bridge, initial, onClose }: Props) {
     revision: 0,
   });
   const [notice, setNotice] = useState('');
+  const [copied, setCopied] = useState<'image' | 'notes' | null>(null);
+  const [focusNote, setFocusNote] = useState(0);
+  const [noteGroupId, setNoteGroupId] = useState<string | null>(null);
+  const latestGroupId = useRef(session.activeGroupId);
   const [exporting, setExporting] = useState(false);
+  const [exportScope, setExportScope] = useState<ExportScope>('all');
   const captureLock = useRef(false);
   const moves = useRef(new ElementMoves());
+  const uiRoot = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const activeGroup =
     session.groups.find((g) => g.id === session.activeGroupId) ?? session.groups[0]!;
@@ -113,9 +137,14 @@ export function App({ host, bridge, initial, onClose }: Props) {
     setToolState(next);
   };
   const selectGroup = (group: Group) => {
+    setNewNumberSelected(false);
+    latestGroupId.current = group.id;
+    setNoteGroupId(null);
     update((s) => ({ ...s, mode: group.kind, activeGroupId: group.id }), false);
   };
   const assignGroup = (group: Group) => {
+    latestGroupId.current = group.id;
+    setNoteGroupId(null);
     if (sessionRef.current.annotations.some((a) => a.id === selectedId && a.groupId !== group.id))
       update((s) => ({
         ...s,
@@ -133,6 +162,8 @@ export function App({ host, bridge, initial, onClose }: Props) {
       (g) => g.kind === 'number' && !s.annotations.some((a) => a.groupId === g.id),
     )!;
     if (annotationId) {
+      latestGroupId.current = group.id;
+      setNoteGroupId(null);
       update({
         ...s,
         annotations: s.annotations.map((a) =>
@@ -141,7 +172,10 @@ export function App({ host, bridge, initial, onClose }: Props) {
         activeGroupId: group.id,
         mode: 'number',
       });
-    } else selectGroup(group);
+    } else {
+      selectGroup(group);
+      setNewNumberSelected(true);
+    }
     setGroupMenu(false);
   };
   const removeColor = (id: string) => {
@@ -155,6 +189,8 @@ export function App({ host, bridge, initial, onClose }: Props) {
     setGroupMenu(false);
   };
   const commit = (annotation: Annotation) => {
+    latestGroupId.current = annotation.groupId;
+    setNoteGroupId(null);
     update((s) => {
       const annotations = [...s.annotations.filter((a) => a.id !== annotation.id), annotation];
       const isNew = !s.annotations.some((a) => a.id === annotation.id);
@@ -176,6 +212,10 @@ export function App({ host, bridge, initial, onClose }: Props) {
       next.delete(annotation.id);
       return next;
     });
+    if (sessionRef.current.mode === 'number')
+      setNewNumberSelected(
+        !sessionRef.current.annotations.some((a) => a.groupId === sessionRef.current.activeGroupId),
+      );
     setSelectedId(annotation.id);
     setDraft(null);
     gesture.current = null;
@@ -186,6 +226,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
   };
   const removeSelected = () => {
     if (!selectedId) return;
+    setNoteGroupId(null);
     cancel();
     setGroupMenu(false);
     update((s) => ({ ...s, annotations: s.annotations.filter((a) => a.id !== selectedId) }));
@@ -212,6 +253,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
     setGroupMenu(false);
   };
   const clearMarks = () => {
+    setNoteGroupId(null);
     cancel();
     if (sessionRef.current.annotations.length) update((s) => ({ ...s, annotations: [] }));
     setSelectedId(null);
@@ -225,6 +267,14 @@ export function App({ host, bridge, initial, onClose }: Props) {
     setSelectedId(null);
     setGroupMenu(false);
   };
+  const changeTheme = (value: Theme) => {
+    setTheme(value);
+    void bridge.saveTheme(value).catch(() => setNotice('Unable to save theme locally.'));
+  };
+  const changePalette = (colors: string[]) => {
+    setPalette(colors);
+    void bridge.savePalette(colors).catch(() => setNotice('Unable to save palette locally.'));
+  };
   const changeKeybindings = (bindings: Keybindings) => {
     setKeybindings(bindings);
     void bridge
@@ -235,6 +285,18 @@ export function App({ host, bridge, initial, onClose }: Props) {
   useEffect(() => {
     let mounted = true;
     void bridge
+      .loadTheme()
+      .then((value) => {
+        if (mounted) setTheme(value);
+      })
+      .catch(() => setNotice('Unable to load theme.'));
+    void bridge
+      .loadPalette()
+      .then((colors) => {
+        if (mounted) setPalette(colors);
+      })
+      .catch(() => setNotice('Unable to load palette.'));
+    void bridge
       .loadKeybindings()
       .then((bindings) => {
         if (mounted) setKeybindings(bindings);
@@ -244,6 +306,14 @@ export function App({ host, bridge, initial, onClose }: Props) {
       mounted = false;
     };
   }, [bridge]);
+
+  useEffect(() => {
+    const preference = matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setSystemDark(preference.matches);
+    preference.addEventListener('change', update);
+    update();
+    return () => preference.removeEventListener('change', update);
+  }, []);
 
   useEffect(() => {
     const thaw = freezePage(host);
@@ -270,6 +340,11 @@ export function App({ host, bridge, initial, onClose }: Props) {
     const timer = setTimeout(() => setNotice(''), 4500);
     return () => clearTimeout(timer);
   }, [notice]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(null), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
   useEffect(() => {
     let frame = 0;
     const refresh = () => {
@@ -309,7 +384,8 @@ export function App({ host, bridge, initial, onClose }: Props) {
     return element ? { ...a, bounds: elementBounds(element) } : a;
   });
   const visibleAnnotations = freshAnnotations.filter((a) => !hiddenIds.has(a.id));
-  const selected = visibleAnnotations.find((a) => a.id === selectedId);
+  const selectedAnnotation = visibleAnnotations.find((a) => a.id === selectedId);
+  const selected = selectedAnnotation && draft?.id === selectedId ? draft : selectedAnnotation;
   const selectedGroup = session.groups.find((g) => g.id === selected?.groupId);
   const markedGroupIds = new Set(session.annotations.map((annotation) => annotation.groupId));
   const visibleGroups = session.groups.filter(
@@ -359,7 +435,13 @@ export function App({ host, bridge, initial, onClose }: Props) {
       setSelectedId(hit?.id ?? null);
       const group = session.groups.find((g) => g.id === hit?.groupId);
       if (group) selectGroup(group);
-      if (hit && !hit.element) {
+      if (hit?.tool === 'move' && hit.element && hit.delta) {
+        const element = resolveElement(hit.element.selector);
+        if (element) {
+          gesture.current = { annotation: hit, start: point, element, baseDelta: hit.delta };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }
+      } else if (hit && !hit.element) {
         gesture.current = {
           annotation: hit,
           start: point,
@@ -494,6 +576,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
       next.delta &&
       distance(next.delta, current.baseDelta ?? { x: 0, y: 0 }) < 1
     ) {
+      if (current.element) moves.current.move(current.element, current.baseDelta ?? { x: 0, y: 0 });
       setDraft(null);
       gesture.current = null;
       return;
@@ -512,11 +595,58 @@ export function App({ host, bridge, initial, onClose }: Props) {
     gesture.current = null;
   }
 
+  const onExport = async (action: 'image' | 'notes' | 'save', scope: ExportScope) => {
+    if (exporting) return;
+    setMenu(null);
+    setNotice('');
+    setCopied(null);
+    setExporting(true);
+    try {
+      if (action === 'notes') {
+        await bridge.copyText(
+          buildPrompt(sessionRef.current, scope, location.href, document.title),
+        );
+        setCopied('notes');
+      } else {
+        captureLock.current = true;
+        uiRoot.current?.style.setProperty('display', 'none');
+        const capture = await capturePage(bridge, session.annotations, host);
+        uiRoot.current?.style.removeProperty('display');
+        captureLock.current = false;
+        const image = await composeImage(
+          capture.dataUrl,
+          capture.annotations,
+          session.groups,
+          capture.viewport,
+          scope,
+        );
+        if (action === 'image') {
+          await bridge.copyImage(image);
+          setCopied('image');
+        } else {
+          await bridge.download(image, `qritique-${location.hostname || 'website'}.png`);
+          setNotice('Image saved');
+        }
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Export failed. Please try again.');
+    } finally {
+      uiRoot.current?.style.removeProperty('display');
+      captureLock.current = false;
+      setExporting(false);
+    }
+  };
+
+  const flipBrushOrientation = () => {
+    if (tool === 'brush')
+      setOrientation((value) => (value === 'horizontal' ? 'vertical' : 'horizontal'));
+  };
+
   const currentActions = {
     tool,
     menu,
     groupMenu,
-    keybindingsOpen,
+    settingsOpen,
     keybindings,
     draft,
     selectedId,
@@ -528,6 +658,9 @@ export function App({ host, bridge, initial, onClose }: Props) {
     onClose,
     clearMarks,
     toggleHidden,
+    onExport,
+    exportScope,
+    flipBrushOrientation,
   };
   const actions = useRef(currentActions);
   actions.current = currentActions;
@@ -546,14 +679,43 @@ export function App({ host, bridge, initial, onClose }: Props) {
         event.stopImmediatePropagation();
         return;
       }
-      if (isEditing(event)) return;
       const a = actions.current;
-      if (a.keybindingsOpen) return;
+      if (a.settingsOpen) return;
+      if (isEditing(event)) {
+        const shortcut = shortcutFromEvent(event);
+        if (shortcut && a.keybindings.close.includes(shortcut)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          a.onClose();
+        }
+        return;
+      }
+      const digit =
+        /^Digit([1-9])$/.exec(event.code)?.[1] ??
+        (!event.shiftKey && /^[1-9]$/.test(event.key) ? event.key : undefined);
+      if (digit && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const s = sessionRef.current;
+        const kind = event.shiftKey ? 'number' : 'color';
+        const groups = s.groups.filter((group) => group.kind === kind);
+        const group = groups[Number(digit) - 1];
+        if (group) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          latestGroupId.current = group.id;
+          setNewNumberSelected(
+            kind === 'number' &&
+              !s.annotations.some((annotation) => annotation.groupId === group.id),
+          );
+          setNoteGroupId(null);
+          update({ ...s, mode: group.kind, activeGroupId: group.id }, false);
+        }
+        return;
+      }
       const shortcut = shortcutFromEvent(event);
       const action = shortcutActions.find(
         (action) => shortcut && a.keybindings[action].includes(shortcut),
       );
-      if (!action) return;
+      if (!action || (action === 'flipBrush' && a.tool !== 'brush')) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       if (action === 'cancel') {
@@ -561,15 +723,34 @@ export function App({ host, bridge, initial, onClose }: Props) {
         else if (a.groupMenu) setGroupMenu(false);
         else if (a.menu) setMenu(null);
         else if (a.selectedId) setSelectedId(null);
-        else a.onClose();
-      } else if (action === 'undo' || action === 'redo') a.undo(action === 'redo');
+      } else if (action === 'close') a.onClose();
+      else if (action === 'annotate') {
+        const s = sessionRef.current;
+        const group =
+          s.groups.find((item) => item.id === latestGroupId.current) ??
+          s.groups.find((item) => item.id === s.activeGroupId);
+        if (group) {
+          noteSelection.current =
+            s.mode === 'number' && newNumberSelectedRef.current
+              ? { noteId: group.id, previousId: s.activeGroupId }
+              : null;
+          setNewNumberSelected(false);
+          update({ ...s, mode: group.kind, activeGroupId: group.id }, false);
+          setNoteGroupId(group.id);
+          setFocusNote((value) => value + 1);
+        }
+      } else if (action === 'copyImage' || action === 'copyNotes')
+        void a.onExport(action === 'copyImage' ? 'image' : 'notes', a.exportScope);
+      else if (action === 'undo' || action === 'redo') a.undo(action === 'redo');
       else if (action === 'delete') a.removeSelected();
       else if (action === 'finish') a.finishPolygon();
-      else if (action === 'hide') a.toggleHidden();
+      else if (action === 'flipBrush') {
+        if (!event.repeat) a.flipBrushOrientation();
+      } else if (action === 'hide') a.toggleHidden();
       else if (action === 'clear') a.clearMarks();
       else if (action === 'keybindings') {
         a.cancel();
-        setKeybindingsOpen(true);
+        setSettingsOpen(true);
       } else if (action === 'parent' || action === 'child') {
         const element = hoveredRef.current;
         if (!element || (a.tool !== 'inspect' && a.tool !== 'move')) return;
@@ -589,8 +770,16 @@ export function App({ host, bridge, initial, onClose }: Props) {
       else if (action === 'numbers') {
         const s = sessionRef.current;
         const mode = s.mode === 'number' ? 'color' : 'number';
-        const group = s.groups.find((g) => g.kind === mode);
-        if (group) update({ ...s, mode, activeGroupId: group.id }, false);
+        const group = s.groups.find(
+          (g) =>
+            g.kind === mode && (mode === 'color' || !s.annotations.some((a) => a.groupId === g.id)),
+        );
+        if (group) {
+          setNewNumberSelected(mode === 'number');
+          latestGroupId.current = group.id;
+          setNoteGroupId(null);
+          update({ ...s, mode, activeGroupId: group.id }, false);
+        }
       } else a.setTool(action);
     };
     const onWheel = (event: WheelEvent) => {
@@ -599,6 +788,13 @@ export function App({ host, bridge, initial, onClose }: Props) {
         return;
       }
       const a = actions.current;
+      if (a.settingsOpen) {
+        const insideSettings = event
+          .composedPath()
+          .some((target) => target instanceof HTMLElement && target.matches('.settings-content'));
+        if (!insideSettings) event.preventDefault();
+        return;
+      }
       if (event.ctrlKey && (a.tool === 'pencil' || a.tool === 'brush') && !isEditing(event)) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -613,50 +809,13 @@ export function App({ host, bridge, initial, onClose }: Props) {
     };
   }, [update, updateHovered]);
 
-  const onExport = async (action: 'image' | 'notes' | 'save', scope: ExportScope) => {
-    if (exporting) return;
-    setMenu(null);
-    setNotice('');
-    setExporting(true);
-    try {
-      if (action === 'notes') {
-        await bridge.copyText(
-          buildPrompt(sessionRef.current, scope, location.href, document.title),
-        );
-        setNotice('Notes copied');
-      } else {
-        captureLock.current = true;
-        host.style.setProperty('visibility', 'hidden', 'important');
-        const capture = await capturePage(bridge, session.annotations, host);
-        const image = await composeImage(
-          capture.dataUrl,
-          capture.annotations,
-          session.groups,
-          capture.viewport,
-          scope,
-        );
-        host.style.removeProperty('visibility');
-        captureLock.current = false;
-        if (action === 'image') {
-          await bridge.copyImage(image);
-          setNotice('Image copied');
-        } else {
-          await bridge.download(image, `qritique-${location.hostname || 'website'}.png`);
-          setNotice('Image saved');
-        }
-      }
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Export failed. Please try again.');
-    } finally {
-      host.style.removeProperty('visibility');
-      captureLock.current = false;
-      setExporting(false);
-    }
-  };
-
   const hoverBounds = hovered?.isConnected ? elementBounds(hovered) : null;
   return (
-    <div className="qritique-root" data-exporting={exporting}>
+    <div
+      className="qritique-root"
+      data-theme={theme === 'system' ? (systemDark ? 'dark' : 'light') : theme}
+      ref={uiRoot}
+    >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: This drawing surface supports pointer gestures and global keyboard tools. */}
       <div
         ref={layer}
@@ -679,6 +838,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
         onContextMenu={(event) => {
           event.preventDefault();
           if (draft) cancel();
+          else if (!exporting) flipBrushOrientation();
         }}
       >
         <svg
@@ -714,6 +874,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
                     annotation={a}
                     group={group}
                     selected={tool === 'select' && selectedId === a.id}
+                    dimmed={group.id !== activeGroup.id}
                   />
                 ) : null;
               })}
@@ -722,6 +883,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
                 annotation={draft}
                 selected={tool === 'select'}
                 group={session.groups.find((g) => g.id === draft.groupId) ?? activeGroup}
+                dimmed={draft.groupId !== activeGroup.id}
               />
             )}
             {draft?.tool === 'polygon' && (
@@ -742,7 +904,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
                     cy={p.y}
                     r={i === 0 ? 4 : 2.5}
                     fill={activeGroup.color}
-                    stroke="white"
+                    stroke="var(--color-ui-white)"
                     strokeWidth="1"
                   />
                 ))}
@@ -769,7 +931,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
                   cy={cursor.y}
                   r={size / 2}
                   fill="none"
-                  stroke="white"
+                  stroke="var(--color-ui-white)"
                   strokeWidth="1"
                 />
               ) : (
@@ -779,7 +941,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
                   width={orientation === 'horizontal' ? size : 2}
                   height={orientation === 'vertical' ? size : 2}
                   fill="none"
-                  stroke="white"
+                  stroke="var(--color-ui-white)"
                   strokeWidth="1"
                 />
               ))}
@@ -911,9 +1073,9 @@ export function App({ host, bridge, initial, onClose }: Props) {
         onUndo={() => undo()}
         onRedo={() => undo(true)}
         onHide={toggleHidden}
-        onKeybindings={() => {
+        onSettings={() => {
           cancel();
-          setKeybindingsOpen(true);
+          setSettingsOpen(true);
         }}
       />
       {notice && (
@@ -926,12 +1088,19 @@ export function App({ host, bridge, initial, onClose }: Props) {
         keybindings={keybindings}
         setTool={setTool}
         groups={visibleGroups}
+        exportGroups={session.groups.filter(
+          (group) => group.note.trim() || session.annotations.some((a) => a.groupId === group.id),
+        )}
         activeGroupId={session.activeGroupId}
+        newNumberSelected={newNumberSelected && !draft}
         mode={session.mode}
         selectGroup={selectGroup}
         setMode={(mode) => {
-          const group = session.groups.find((g) => g.kind === mode);
-          if (group) selectGroup(group);
+          if (mode === 'number') addNumber();
+          else {
+            const group = session.groups.find((g) => g.kind === mode);
+            if (group) selectGroup(group);
+          }
         }}
         addColor={(color) => {
           const existing = session.groups.find(
@@ -941,6 +1110,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
             selectGroup(existing);
             return;
           }
+          if (session.groups.filter((g) => g.kind === 'color').length >= 5) return;
           const group: Group = {
             id: crypto.randomUUID(),
             kind: 'color',
@@ -948,6 +1118,8 @@ export function App({ host, bridge, initial, onClose }: Props) {
             color,
             note: '',
           };
+          latestGroupId.current = group.id;
+          setNoteGroupId(null);
           update((s) => ({
             ...s,
             groups: [...s.groups, group],
@@ -958,7 +1130,22 @@ export function App({ host, bridge, initial, onClose }: Props) {
         addNumber={() => addNumber()}
         removeColor={removeColor}
         note={activeGroup.note}
-        showNote={markedGroupIds.has(activeGroup.id)}
+        showNote={
+          activeGroup.kind === 'color' ||
+          markedGroupIds.has(activeGroup.id) ||
+          noteGroupId === activeGroup.id
+        }
+        focusNote={focusNote}
+        onNoteBlur={() => {
+          const selection = noteSelection.current;
+          noteSelection.current = null;
+          const s = sessionRef.current;
+          if (selection && s.activeGroupId === selection.noteId) {
+            setNoteGroupId(null);
+            setNewNumberSelected(true);
+            update({ ...s, activeGroupId: selection.previousId }, false);
+          }
+        }}
         setNote={(note) =>
           update(
             (s) => ({
@@ -975,13 +1162,20 @@ export function App({ host, bridge, initial, onClose }: Props) {
         orientation={orientation}
         setOrientation={setOrientation}
         exporting={exporting}
+        copied={copied}
+        scope={exportScope}
+        setScope={setExportScope}
         onExport={onExport}
       />
-      {keybindingsOpen && (
-        <KeybindingsDialog
+      {settingsOpen && (
+        <SettingsDialog
+          theme={theme}
+          onThemeChange={changeTheme}
+          palette={palette}
+          onPaletteChange={changePalette}
           bindings={keybindings}
           onChange={changeKeybindings}
-          onClose={() => setKeybindingsOpen(false)}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
     </div>

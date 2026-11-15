@@ -12,7 +12,7 @@ import type { Annotation } from '../src/lib/types';
 
 const box: Annotation = {
   id: 'a',
-  groupId: 'blue',
+  groupId: 'teal',
   tool: 'box',
   points: [
     { x: 40, y: 50 },

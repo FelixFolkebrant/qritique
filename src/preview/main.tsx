@@ -4,7 +4,8 @@ import overlayCss from '../assets/style.css?inline';
 import { App } from '../components/App';
 import { type Bridge, copyImageLocally, downloadLocally } from '../lib/bridge';
 import { readKeybindings } from '../lib/keybindings';
-import { emptySession, isSession } from '../lib/types';
+import { readTheme } from '../lib/theme';
+import { emptySession, isSession, readPalette } from '../lib/types';
 import './style.css';
 
 function Playground() {
@@ -158,7 +159,9 @@ function Playground() {
 
 createRoot(document.getElementById('playground')!).render(<Playground />);
 const storageKey = 'qritique:preview-session';
-let initial = emptySession();
+let initial = emptySession(
+  readPalette(JSON.parse(localStorage.getItem('qritique:palette') ?? 'null')),
+);
 try {
   const stored: unknown = JSON.parse(localStorage.getItem(storageKey) ?? 'null');
   if (isSession(stored)) initial = stored;
@@ -166,6 +169,18 @@ try {
   /* Fresh playground. */
 }
 const bridge: Bridge = {
+  async loadTheme() {
+    return readTheme(localStorage.getItem('qritique:theme'));
+  },
+  async saveTheme(theme) {
+    localStorage.setItem('qritique:theme', theme);
+  },
+  async loadPalette() {
+    return readPalette(JSON.parse(localStorage.getItem('qritique:palette') ?? 'null'));
+  },
+  async savePalette(colors) {
+    localStorage.setItem('qritique:palette', JSON.stringify(colors));
+  },
   async loadKeybindings() {
     return readKeybindings(JSON.parse(localStorage.getItem('qritique:keybindings') ?? 'null'));
   },
