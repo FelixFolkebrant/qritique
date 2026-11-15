@@ -2,7 +2,7 @@ import { brushPath, pathOf } from './geometry';
 import type { Annotation, ExportScope, Group, Session } from './types';
 
 export function inScope(group: Group, scope: ExportScope): boolean {
-  return scope === 'all' || (scope === 'number' ? group.kind === 'number' : group.id === scope);
+  return scope === 'all' || scope.includes(group.id);
 }
 
 export function buildPrompt(

@@ -1,6 +1,21 @@
-import { Eye, EyeOff, Keyboard, Menu, Redo2, Trash2, Undo2, X } from 'lucide-react';
+import { Eye, EyeOff, Menu, Redo2, Settings, Trash2, Undo2, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Button } from './Button';
+
+function animateHistory(button: HTMLButtonElement, angle: number) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const icon = button.querySelector('svg');
+  if (!icon) return;
+  for (const animation of icon.getAnimations()) animation.cancel();
+  icon.animate(
+    [
+      { transform: 'rotate(0deg)' },
+      { transform: `rotate(${angle}deg)`, offset: 0.4 },
+      { transform: 'rotate(0deg)' },
+    ],
+    { duration: 150, easing: 'ease-out' },
+  );
+}
 
 interface Props {
   canUndo: boolean;
@@ -13,7 +28,7 @@ interface Props {
   onUndo(): void;
   onRedo(): void;
   onHide(): void;
-  onKeybindings(): void;
+  onSettings(): void;
 }
 
 export function SessionMenu(props: Props) {
@@ -61,19 +76,22 @@ export function SessionMenu(props: Props) {
             {props.hidden ? <EyeOff size={18} /> : <Eye size={18} />}
           </Button>
           <Button
-            title="Keybinds"
-            aria-label="Keybinds"
+            title="Settings"
+            aria-label="Settings"
             disabled={props.disabled}
-            onClick={props.onKeybindings}
+            onClick={props.onSettings}
           >
-            <Keyboard size={19} />
+            <Settings size={19} />
           </Button>
           <span className="divider" />
           <Button
             title="Undo markings"
             aria-label="Undo markings"
             disabled={props.disabled || !props.canUndo}
-            onClick={props.onUndo}
+            onClick={(event) => {
+              animateHistory(event.currentTarget, -10);
+              props.onUndo();
+            }}
           >
             <Undo2 size={18} />
           </Button>
@@ -81,7 +99,10 @@ export function SessionMenu(props: Props) {
             title="Redo markings"
             aria-label="Redo markings"
             disabled={props.disabled || !props.canRedo}
-            onClick={props.onRedo}
+            onClick={(event) => {
+              animateHistory(event.currentTarget, 10);
+              props.onRedo();
+            }}
           >
             <Redo2 size={18} />
           </Button>

@@ -32,7 +32,7 @@ export type Session = {
   mode: Mode;
   activeGroupId: string;
 };
-export type ExportScope = 'all' | 'number' | string;
+export type ExportScope = 'all' | string[];
 export type Message =
   | { type: 'qritique:toggle' }
   | { type: 'qritique:ping' }
@@ -42,19 +42,42 @@ export type Message =
   | { type: 'qritique:download'; dataUrl: string; filename: string };
 
 export const BASE_GROUPS: Group[] = [
-  { id: 'blue', kind: 'color', label: 'Blue', color: '#164bff', note: '' },
-  { id: 'red', kind: 'color', label: 'Red', color: '#ff2028', note: '' },
-  { id: 'green', kind: 'color', label: 'Green', color: '#28c34e', note: '' },
+  { id: 'teal', kind: 'color', label: 'Teal', color: '#016471', note: '' },
+  { id: 'red', kind: 'color', label: 'Red', color: '#992b2b', note: '' },
+  { id: 'green', kind: 'color', label: 'Green', color: '#2b803f', note: '' },
   { id: 'number-1', kind: 'number', label: '1', color: '#ffffff', note: '' },
 ];
 
-export function emptySession(): Session {
+export const defaultPalette = () =>
+  BASE_GROUPS.filter((group) => group.kind === 'color').map((group) => group.color);
+
+export function readPalette(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 5 ||
+    !value.every((color) => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color))
+  )
+    return defaultPalette();
+  return [...value];
+}
+
+export function emptySession(palette = defaultPalette()): Session {
+  const colors: Group[] = palette.map((color, index) => {
+    const base = BASE_GROUPS.find((group) => group.kind === 'color' && group.color === color);
+    return {
+      id: base && palette.indexOf(color) === index ? base.id : `color-${index}`,
+      kind: 'color',
+      label: base?.label ?? color.toUpperCase(),
+      color,
+      note: '',
+    };
+  });
   return {
     version: 1,
-    groups: BASE_GROUPS.map((group) => ({ ...group })),
+    groups: [...colors, { ...BASE_GROUPS[3]! }],
     annotations: [],
-    mode: 'color',
-    activeGroupId: 'blue',
+    mode: colors.length ? 'color' : 'number',
+    activeGroupId: colors[0]?.id ?? 'number-1',
   };
 }
 

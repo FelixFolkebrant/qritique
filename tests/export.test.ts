@@ -8,21 +8,25 @@ describe('feedback export', () => {
     session.groups[0]!.note = 'Reduce the navigation spacing.';
     session.groups[1]!.note = 'Move this button to the left.';
     session.groups[3]!.note = 'Make the headline shorter.';
-    const prompt = buildPrompt(session, 'blue', 'https://example.com', 'Example');
-    expect(prompt).toContain('Blue (#164bff)');
+    const prompt = buildPrompt(session, ['teal'], 'https://example.com', 'Example');
+    expect(prompt).toContain('Teal (#016471)');
     expect(prompt).toContain('Reduce the navigation spacing.');
     expect(prompt).not.toContain('Move this button');
     expect(prompt).not.toContain('Make the headline');
-    const numbered = buildPrompt(session, 'number', 'https://example.com', 'Example');
+    const numbered = buildPrompt(session, ['number-1'], 'https://example.com', 'Example');
     expect(numbered).toContain('#1\nMake the headline shorter.');
     expect(numbered).not.toContain('Reduce the navigation');
+    const combined = buildPrompt(session, ['teal', 'number-1'], 'https://example.com', 'Example');
+    expect(combined).toContain('Reduce the navigation spacing.');
+    expect(combined).toContain('Make the headline shorter.');
+    expect(combined).not.toContain('Move this button');
     expect(inScope(session.groups[3]!, 'all')).toBe(true);
   });
   it('includes element selectors and move distances for an actionable prompt', () => {
     const session = emptySession();
     session.annotations.push({
       id: 'move-1',
-      groupId: 'blue',
+      groupId: 'teal',
       tool: 'move',
       points: [],
       size: 24,

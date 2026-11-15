@@ -93,9 +93,32 @@ test('installed Chrome build captures all marks across the full page without the
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
       origin: 'http://localhost:5173',
     });
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ url: 'http://localhost:5173/tests/fixture.html' });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        func: () => {
+          const write = navigator.clipboard.write.bind(navigator.clipboard);
+          navigator.clipboard.write = async (items) => {
+            document.documentElement.dataset.copyPending = 'true';
+            await new Promise<void>((resolve) => {
+              window.addEventListener('release-copy', () => resolve(), { once: true });
+            });
+            navigator.clipboard.write = write;
+            await write(items);
+            delete document.documentElement.dataset.copyPending;
+          };
+        },
+      });
+    });
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Copy image' }).click();
-    await expect(page.getByRole('status')).toHaveText('Image copied');
+    await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeDisabled();
+    await expect(page.locator('html').first()).toHaveAttribute('data-copy-pending', 'true');
+    await expect(page.getByRole('toolbar')).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event('release-copy')));
+    await expect(page.getByRole('status')).toHaveText('Copied image');
+    await expect(page.locator('.export-anchor .lucide-clipboard-check')).toBeVisible();
     const clipboardTypes = await page.evaluate(async () =>
       (await navigator.clipboard.read()).flatMap((item) => item.types),
     );

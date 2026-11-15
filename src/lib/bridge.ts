@@ -1,7 +1,12 @@
 import type { Keybindings } from './keybindings';
+import type { Theme } from './theme';
 import type { Session } from './types';
 
 export interface Bridge {
+  loadTheme(): Promise<Theme>;
+  saveTheme(theme: Theme): Promise<void>;
+  loadPalette(): Promise<string[]>;
+  savePalette(colors: string[]): Promise<void>;
   loadKeybindings(): Promise<Keybindings>;
   saveKeybindings(bindings: Keybindings): Promise<void>;
   load(): Promise<Session | null>;

@@ -4,7 +4,8 @@ import { browser } from 'wxt/browser';
 import { App } from '../../components/App';
 import { type Bridge, copyImageLocally, downloadLocally } from '../../lib/bridge';
 import { readKeybindings } from '../../lib/keybindings';
-import { emptySession, isSession, type Message } from '../../lib/types';
+import { readTheme } from '../../lib/theme';
+import { emptySession, isSession, type Message, readPalette } from '../../lib/types';
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*', 'file:///*'],
@@ -18,6 +19,20 @@ export default defineContentScript({
       return result;
     };
     const bridge: Bridge = {
+      async loadTheme() {
+        return readTheme((await browser.storage.local.get('qritique:theme'))['qritique:theme']);
+      },
+      async saveTheme(theme) {
+        await browser.storage.local.set({ 'qritique:theme': theme });
+      },
+      async loadPalette() {
+        return readPalette(
+          (await browser.storage.local.get('qritique:palette'))['qritique:palette'],
+        );
+      },
+      async savePalette(colors) {
+        await browser.storage.local.set({ 'qritique:palette': colors });
+      },
       async loadKeybindings() {
         return readKeybindings(
           (await browser.storage.local.get('qritique:keybindings'))['qritique:keybindings'],
@@ -65,7 +80,7 @@ export default defineContentScript({
       if (active || ctx.isInvalid) return;
       active = true;
       try {
-        initial = (await bridge.load()) ?? emptySession();
+        initial = (await bridge.load()) ?? emptySession(await bridge.loadPalette());
       } catch {
         initial = emptySession();
       }
