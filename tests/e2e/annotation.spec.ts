@@ -810,7 +810,7 @@ test('numbered mode starts a new group unless an existing number is selected', a
   await expect(marks(page).last().locator('text')).toHaveText('2');
   await page.keyboard.press('n');
   await page.keyboard.press('n');
-  await page.keyboard.press('1');
+  await page.keyboard.press('Shift+1');
   await expect(one).toHaveAttribute('aria-pressed', 'true');
   await expect(plus).toHaveAttribute('aria-pressed', 'false');
   await drawBox(page, { x: 75, y: 350 }, { x: 400, y: 450 });
@@ -822,7 +822,7 @@ test('returns to a new number after editing a note and selects plus for the next
 }) => {
   const plus = page.getByRole('button', { name: 'Add numbered note' });
   await page.keyboard.press('n');
-  await page.keyboard.press('1');
+  await page.keyboard.press('Shift+1');
   await expect(plus).toHaveAttribute('aria-pressed', 'true');
   await drawBox(page);
   await page.keyboard.press('c');
@@ -831,11 +831,11 @@ test('returns to a new number after editing a note and selects plus for the next
   await note.fill('First note');
   await page.keyboard.press('Escape');
   await expect(plus).toHaveAttribute('aria-pressed', 'true');
-  await page.keyboard.press('2');
+  await page.keyboard.press('Shift+2');
   await expect(plus).toHaveAttribute('aria-pressed', 'true');
   await drawBox(page, { x: 500, y: 150 }, { x: 700, y: 290 });
   await expect(marks(page).last().locator('text')).toHaveText('2');
-  await page.keyboard.press('1');
+  await page.keyboard.press('Shift+1');
   await page.keyboard.press('c');
   await expect(note).toHaveValue('First note');
   await page.keyboard.press('Escape');
