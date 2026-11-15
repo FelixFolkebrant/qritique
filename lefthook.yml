@@ -1,0 +1,30 @@
+glob_matcher: doublestar
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: lint staged files
+      glob: "**/*.{js,jsx,mjs,cjs,ts,tsx,json,jsonc,css}"
+      exclude: pnpm-lock.yaml
+      run: node scripts/hooks/lint-staged.mjs {staged_files}
+    - name: typecheck staged files
+      glob: "**/*.{ts,tsx}"
+      run: node scripts/hooks/typecheck-staged.mjs {staged_files}
+
+commit-msg:
+  jobs:
+    - name: check commit message
+      run: node scripts/hooks/commit-message.mjs {1}
+
+pre-push:
+  piped: true
+  jobs:
+    - name: check branch names
+      run: node scripts/hooks/branch-names.mjs
+      use_stdin: true
+    - name: typecheck
+      run: pnpm typecheck
+    - name: unit tests
+      run: pnpm test
+    - name: browser tests
+      run: pnpm test:e2e

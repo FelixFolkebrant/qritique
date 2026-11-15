@@ -75,6 +75,8 @@ Notes and marks are saved locally per page URL (origin, pathname, query; hash ex
 
 ## Validate
 
+`pnpm install` installs the Git hooks. Commits check staged Biome-supported files and typecheck staged TypeScript files; commit titles must be descriptive, with an optional issue suffix such as `(#142)`. Write titles in the imperative as described in `AGENTS.md`. Pushes require `{username}/{short-description}` feature branch names and run the full typecheck, unit tests, and browser tests. Creating `main` on a new remote is also allowed. Install the Playwright browsers before pushing. The typecheck uses project dependencies from the working tree, and push checks run against the working tree.
+
 ```sh
 pnpm lint
 pnpm typecheck
