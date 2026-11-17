@@ -159,6 +159,37 @@ test('installed Chrome build captures all marks across the full page without the
   }
 });
 
+test('installed note editor matches the selected appearance', async ({ browserName }) => {
+  test.skip(browserName !== 'chromium', 'Uses the installed Chromium extension.');
+  const { temp, context } = await launchExtension();
+  try {
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const page = await context.newPage();
+    await page.goto('http://localhost:5173/tests/fixture.html');
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        files: ['/content-scripts/annotate.js'],
+      });
+    });
+    const editor = page.frameLocator('iframe[title="Qritique note editor"]');
+    const notePanel = editor.locator('.note-panel');
+    const editorRoot = editor.locator('.qritique-root');
+    await page.getByRole('button', { name: 'Session menu', exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await dialog.getByRole('button', { name: 'Dark', exact: true }).click();
+    await expect(editorRoot).toHaveCSS('background-color', 'rgb(50, 50, 49)');
+    await expect(notePanel).toHaveCSS('border-radius', '0px');
+    await dialog.getByRole('button', { name: 'Light', exact: true }).click();
+    await expect(editorRoot).toHaveCSS('background-color', 'rgb(245, 245, 243)');
+  } finally {
+    await context.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('installed overlay protects notes and ignores synthetic page actions', async ({
   browserName,
 }) => {
