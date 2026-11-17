@@ -1,14 +1,18 @@
 import { browser } from 'wxt/browser';
+import { connectNoteEditors } from '../lib/extension-notes';
+import { handleStorage } from '../lib/storage';
 import type { Message } from '../lib/types';
 
 let captureQueue: Promise<unknown> = Promise.resolve();
 let lastCapture = 0;
-function captureTab(windowId: number) {
+function captureTab(windowId: number, tabId: number) {
   const task = captureQueue.then(async () => {
     if (!import.meta.env.FIREFOX) {
       const wait = 550 - (Date.now() - lastCapture);
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     }
+    const [active] = await browser.tabs.query({ active: true, windowId });
+    if (active?.id !== tabId) throw new Error('Keep the annotated tab active while exporting.');
     lastCapture = Date.now();
     return browser.tabs.captureVisibleTab(windowId, { format: 'png' });
   });
@@ -71,6 +75,10 @@ async function copyInExtensionPage(
 }
 
 export default defineBackground(() => {
+  connectNoteEditors();
+  const storageReady = import.meta.env.FIREFOX
+    ? Promise.resolve()
+    : browser.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   browser.action.onClicked.addListener(async (tab) => {
     if (tab.id == null) return;
     try {
@@ -100,9 +108,23 @@ export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
     if (!message || typeof message !== 'object' || 'target' in message) return;
     if (!message?.type?.startsWith('qritique:') || sender.id !== browser.runtime.id) return;
-    if (!['qritique:capture', 'qritique:copy-image', 'qritique:copy-text'].includes(message.type))
+    if (
+      ![
+        'qritique:capture',
+        'qritique:copy-image',
+        'qritique:copy-text',
+        'qritique:load',
+        'qritique:save',
+      ].includes(message.type)
+    )
       return;
     void (async () => {
+      if (message.type === 'qritique:load' || message.type === 'qritique:save') {
+        if (sender.frameId !== 0 || !sender.tab || !sender.url)
+          throw new Error('No annotated website for storage.');
+        await storageReady;
+        return handleStorage(message, sender.url);
+      }
       if (message.type === 'qritique:capture') {
         if (!sender.tab?.id || sender.tab.windowId == null)
           throw new Error('No website to capture.');
@@ -110,7 +132,7 @@ export default defineBackground(() => {
         if (active?.id !== sender.tab.id)
           throw new Error('Keep the annotated tab active while exporting.');
         return {
-          dataUrl: await captureTab(sender.tab.windowId),
+          dataUrl: await captureTab(sender.tab.windowId, sender.tab.id),
         };
       }
       if (message.type === 'qritique:copy-image' || message.type === 'qritique:copy-text') {

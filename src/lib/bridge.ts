@@ -1,8 +1,13 @@
 import type { Keybindings } from './keybindings';
+import type { NoteConnection, NoteEvent } from './note-editor';
 import type { Theme } from './theme';
 import type { Session } from './types';
 
 export interface Bridge {
+  noteEditor?: {
+    url: string;
+    connect(frame: HTMLIFrameElement, receive: (event: NoteEvent) => void): NoteConnection;
+  };
   loadTheme(): Promise<Theme>;
   saveTheme(theme: Theme): Promise<void>;
   loadPalette(): Promise<string[]>;

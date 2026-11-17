@@ -59,6 +59,19 @@ type Gesture = {
   resize?: ResizeHandle;
 };
 
+function rejectSyntheticEvent(event: React.SyntheticEvent) {
+  if (
+    event.type === 'click' &&
+    event.target instanceof HTMLInputElement &&
+    event.target.type === 'color'
+  )
+    return;
+  if (!event.isTrusted) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
 export function App({ host, bridge, initial, onClose }: Props) {
   const [session, setSession] = useState(() => normalizeSession(initial));
   const sessionRef = useRef(session);
@@ -674,6 +687,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
             (target.matches('textarea,input') || target.isContentEditable),
         );
     const onKey = (event: KeyboardEvent) => {
+      if (!event.isTrusted) return;
       if (captureLock.current) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -783,6 +797,7 @@ export function App({ host, bridge, initial, onClose }: Props) {
       } else a.setTool(action);
     };
     const onWheel = (event: WheelEvent) => {
+      if (!event.isTrusted) return;
       if (captureLock.current) {
         event.preventDefault();
         return;
@@ -815,6 +830,14 @@ export function App({ host, bridge, initial, onClose }: Props) {
       className="qritique-root"
       data-theme={theme === 'system' ? (systemDark ? 'dark' : 'light') : theme}
       ref={uiRoot}
+      onClickCapture={rejectSyntheticEvent}
+      onPointerDownCapture={rejectSyntheticEvent}
+      onPointerMoveCapture={rejectSyntheticEvent}
+      onPointerUpCapture={rejectSyntheticEvent}
+      onDoubleClickCapture={rejectSyntheticEvent}
+      onContextMenuCapture={rejectSyntheticEvent}
+      onInputCapture={rejectSyntheticEvent}
+      onKeyDownCapture={rejectSyntheticEvent}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: This drawing surface supports pointer gestures and global keyboard tools. */}
       <div
@@ -1136,7 +1159,27 @@ export function App({ host, bridge, initial, onClose }: Props) {
           noteGroupId === activeGroup.id
         }
         focusNote={focusNote}
-        onNoteBlur={() => {
+        noteEditor={bridge.noteEditor}
+        theme={theme === 'system' ? (systemDark ? 'dark' : 'light') : theme}
+        onNoteEvent={(event) => {
+          if (event.type === 'close') {
+            onClose();
+            return;
+          }
+          if (event.type === 'change') {
+            update(
+              (s) => ({
+                ...s,
+                groups: s.groups.map((g) =>
+                  g.id === event.groupId ? { ...g, note: event.note } : g,
+                ),
+              }),
+              false,
+            );
+            return;
+          }
+          if (event.type !== 'blur') return;
+          setFocusNote(0);
           const selection = noteSelection.current;
           noteSelection.current = null;
           const s = sessionRef.current;
@@ -1146,15 +1189,6 @@ export function App({ host, bridge, initial, onClose }: Props) {
             update({ ...s, activeGroupId: selection.previousId }, false);
           }
         }}
-        setNote={(note) =>
-          update(
-            (s) => ({
-              ...s,
-              groups: s.groups.map((g) => (g.id === s.activeGroupId ? { ...g, note } : g)),
-            }),
-            false,
-          )
-        }
         menu={menu}
         setMenu={setMenu}
         size={size}
