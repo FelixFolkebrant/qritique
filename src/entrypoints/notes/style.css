@@ -5,8 +5,11 @@ body {
 }
 .qritique-root {
   position: static;
+  min-height: 100vh;
   pointer-events: auto;
+  background: var(--color-ui-surface);
 }
 .note-panel {
   width: 100%;
+  border-radius: 0;
 }
