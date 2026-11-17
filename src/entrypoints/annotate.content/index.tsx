@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import { App } from '../../components/App';
 import { type Bridge, copyImageLocally, downloadLocally } from '../../lib/bridge';
+import { extensionNoteEditor } from '../../lib/extension-notes';
 import { readKeybindings } from '../../lib/keybindings';
 import { readTheme } from '../../lib/theme';
 import { emptySession, isSession, type Message, readPalette } from '../../lib/types';
@@ -12,41 +13,37 @@ export default defineContentScript({
   registration: 'runtime',
   cssInjectionMode: 'ui',
   async main(ctx) {
-    const storageKey = `qritique:${location.origin}${location.pathname}${location.search}`;
     const send = async (message: Message) => {
       const result = await browser.runtime.sendMessage(message);
       if (result?.error) throw new Error(result.error);
       return result;
     };
     const bridge: Bridge = {
+      noteEditor: extensionNoteEditor,
       async loadTheme() {
-        return readTheme((await browser.storage.local.get('qritique:theme'))['qritique:theme']);
+        return readTheme((await send({ type: 'qritique:load', name: 'theme' })).value);
       },
       async saveTheme(theme) {
-        await browser.storage.local.set({ 'qritique:theme': theme });
+        await send({ type: 'qritique:save', name: 'theme', value: theme });
       },
       async loadPalette() {
-        return readPalette(
-          (await browser.storage.local.get('qritique:palette'))['qritique:palette'],
-        );
+        return readPalette((await send({ type: 'qritique:load', name: 'palette' })).value);
       },
       async savePalette(colors) {
-        await browser.storage.local.set({ 'qritique:palette': colors });
+        await send({ type: 'qritique:save', name: 'palette', value: colors });
       },
       async loadKeybindings() {
-        return readKeybindings(
-          (await browser.storage.local.get('qritique:keybindings'))['qritique:keybindings'],
-        );
+        return readKeybindings((await send({ type: 'qritique:load', name: 'keybindings' })).value);
       },
       async saveKeybindings(bindings) {
-        await browser.storage.local.set({ 'qritique:keybindings': bindings });
+        await send({ type: 'qritique:save', name: 'keybindings', value: bindings });
       },
       async load() {
-        const value = (await browser.storage.local.get(storageKey))[storageKey];
+        const { value } = await send({ type: 'qritique:load', name: 'session' });
         return isSession(value) ? value : null;
       },
       async save(session) {
-        await browser.storage.local.set({ [storageKey]: session });
+        await send({ type: 'qritique:save', name: 'session', value: session });
       },
       async capture() {
         return (await send({ type: 'qritique:capture' })).dataUrl;

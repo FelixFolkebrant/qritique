@@ -341,6 +341,11 @@
   width: calc(100% - 8px);
   overflow: hidden;
 }
+.note-editor-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+}
 .note-panel textarea {
   display: block;
   width: 100%;

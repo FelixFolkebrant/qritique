@@ -5,14 +5,7 @@ import { chromium, expect, test } from '@playwright/test';
 
 declare const chrome: typeof import('wxt/browser').browser;
 
-test('installed Chrome build captures all marks across the full page without the toolbar', async ({
-  browserName,
-}) => {
-  test.skip(
-    browserName !== 'chromium',
-    'The Chromium extension runtime test uses a persistent Chromium profile.',
-  );
-  test.setTimeout(60000);
+async function launchExtension() {
   const temp = await mkdtemp(path.join(tmpdir(), 'qritique-extension-'));
   const extension = path.join(temp, 'extension');
   await cp(path.resolve('.output/chrome-mv3'), extension, { recursive: true });
@@ -27,6 +20,18 @@ test('installed Chrome build captures all marks across the full page without the
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     viewport: { width: 1200, height: 800 },
   });
+  return { temp, context };
+}
+
+test('installed Chrome build captures all marks across the full page without the toolbar', async ({
+  browserName,
+}) => {
+  test.skip(
+    browserName !== 'chromium',
+    'The Chromium extension runtime test uses a persistent Chromium profile.',
+  );
+  test.setTimeout(60000);
+  const { temp, context } = await launchExtension();
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const page = await context.newPage();
@@ -148,6 +153,169 @@ test('installed Chrome build captures all marks across the full page without the
     await toggle();
     await expect(page.getByRole('toolbar')).toBeVisible();
     await expect(page.locator('[data-annotation-id]')).toHaveCount(2);
+  } finally {
+    await context.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('installed overlay protects notes and ignores synthetic page actions', async ({
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'Uses the installed Chromium extension.');
+  test.setTimeout(60000);
+  const { temp, context } = await launchExtension();
+  try {
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const page = await context.newPage();
+    await page.goto('http://localhost:5173/tests/fixture.html?secret=query-token#fragment-token');
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        files: ['/content-scripts/annotate.js'],
+      });
+    });
+    const note = page.frameLocator('iframe[title="Qritique note editor"]').getByRole('textbox');
+    await expect(note).toBeVisible();
+    // Website listeners must not receive editor keystrokes or note-bearing messages.
+    await page.evaluate(() => {
+      document.body.dataset.observedKeys = '';
+      document.body.dataset.observedMessages = '';
+      window.addEventListener(
+        'keydown',
+        (event) => {
+          document.body.dataset.observedKeys += event.key;
+        },
+        true,
+      );
+      window.addEventListener('message', (event) => {
+        document.body.dataset.observedMessages += JSON.stringify(event.data);
+      });
+    });
+    await note.pressSequentially('Private feedback', { delay: 10 });
+    await expect(note).toHaveValue('Private feedback');
+    expect(
+      await page.evaluate(() => {
+        const shadow = document.querySelector('qritique-overlay')!.shadowRoot!;
+        return {
+          textarea: shadow.querySelector('textarea'),
+          editorDocument: shadow.querySelector('iframe')!.contentDocument,
+          keys: document.body.dataset.observedKeys,
+          messages: document.body.dataset.observedMessages,
+        };
+      }),
+    ).toEqual({ textarea: null, editorDocument: null, keys: '', messages: '' });
+    await page.keyboard.press('Enter');
+    await page.mouse.move(70, 120);
+    await page.mouse.down();
+    await page.mouse.move(400, 300, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator('[data-annotation-id]')).toHaveCount(1);
+    await page.evaluate(() => {
+      for (const event of [
+        { key: 'c', code: 'KeyC', ctrlKey: true, shiftKey: true },
+        { key: 'c', code: 'KeyC', ctrlKey: true },
+        { key: 'Escape', code: 'Escape', ctrlKey: true },
+      ])
+        window.dispatchEvent(new KeyboardEvent('keydown', { ...event, bubbles: true }));
+      const shadow = document.querySelector('qritique-overlay')!.shadowRoot!;
+      for (const name of ['Clear markings', 'Close', 'Export'])
+        shadow.querySelector<HTMLButtonElement>(`[aria-label="${name}"]`)!.click();
+    });
+    await expect(page.locator('[data-annotation-id]')).toHaveCount(1);
+    await expect(page.getByRole('toolbar', { name: 'Annotation tools' })).toBeVisible();
+    await expect(page.getByRole('menu', { name: 'Export annotations' })).toHaveCount(0);
+    await expect(page.getByRole('status')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    for (const name of ['Copy image', 'Copy notes'])
+      await page
+        .getByRole('menuitem', { name, exact: true })
+        .evaluate((button) => (button as HTMLButtonElement).click());
+    await expect(page.getByRole('menu', { name: 'Export annotations' })).toBeVisible();
+    await expect(page.getByRole('status')).toHaveCount(0);
+    await page.getByRole('menuitem', { name: 'Copy notes', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('Copied notes');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: 'http://localhost:5173',
+    });
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copied).toContain('Private feedback');
+    expect(copied).not.toContain('query-token');
+    expect(copied).not.toContain('fragment-token');
+    await page.getByRole('button', { name: 'Red', exact: true }).click();
+    await expect(note).toHaveValue('');
+    await page.getByRole('button', { name: 'Teal', exact: true }).click();
+    await expect(note).toHaveValue('Private feedback');
+    const storage = await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true });
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        func: async () => {
+          try {
+            await chrome.storage.local.get(null);
+            return 'allowed';
+          } catch {
+            return 'denied';
+          }
+        },
+      });
+      return result!.result;
+    });
+    expect(storage).toBe('denied');
+    // A page-created editor with a guessed channel must never receive saved notes.
+    const editorUrl = await page
+      .locator('iframe[title="Qritique note editor"]')
+      .getAttribute('src');
+    await page.evaluate((src) => {
+      const frame = document.createElement('iframe');
+      frame.id = 'hostile-editor';
+      frame.src = src!;
+      frame.onload = () => {
+        const channelId = '11111111-1111-4111-8111-111111111111';
+        frame.contentWindow!.postMessage({ type: 'qritique:note-connect', channelId }, '*');
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () =>
+          channel.port1.postMessage({
+            groupId: 'fake',
+            note: 'Forged editor',
+            focus: 0,
+            theme: 'light',
+            closeShortcuts: [],
+          });
+        frame.contentWindow!.postMessage({ type: 'qritique:note-channel', channelId }, '*', [
+          channel.port2,
+        ]);
+      };
+      document.body.append(frame);
+    }, editorUrl);
+    await expect(page.frameLocator('#hostile-editor').locator('body')).toBeAttached();
+    await expect(page.frameLocator('#hostile-editor').getByRole('textbox')).toHaveCount(0);
+    await expect(note).toHaveValue('Private feedback');
+    await page.keyboard.press('Control+Shift+c');
+    await expect(page.getByRole('status')).toHaveText('Copied notes');
+    await page.keyboard.press('c');
+    await expect(note).toBeFocused();
+    await page.keyboard.press('Control+Escape');
+    await expect(page.getByRole('toolbar', { name: 'Annotation tools' })).toHaveCount(0);
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true });
+      await chrome.tabs.sendMessage(tab!.id!, { type: 'qritique:toggle' });
+    });
+    await expect(note).toHaveValue('Private feedback');
+    await expect(page.frameLocator('#hostile-editor').getByRole('textbox')).toHaveCount(0);
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('ServiceWorker.enable');
+    await cdp.send('ServiceWorker.stopAllWorkers');
+    await cdp.detach();
+    await note.fill('Edited after the background stopped');
+    await expect(note).toHaveValue('Edited after the background stopped');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Control+Shift+c');
+    await expect(page.getByRole('status')).toHaveText('Copied notes');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+      'Edited after the background stopped',
+    );
   } finally {
     await context.close();
     await rm(temp, { recursive: true, force: true });

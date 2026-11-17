@@ -34,6 +34,7 @@ export type Session = {
 };
 export type ExportScope = 'all' | string[];
 export type Message =
+  | import('./storage').StorageMessage
   | { type: 'qritique:toggle' }
   | { type: 'qritique:ping' }
   | { type: 'qritique:capture' }

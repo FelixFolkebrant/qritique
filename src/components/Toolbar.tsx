@@ -16,10 +16,13 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { Bridge } from '../lib/bridge';
 import { cn } from '../lib/cn';
 import { type Keybindings, type ShortcutAction, shortcutLabel } from '../lib/keybindings';
+import type { NoteEvent } from '../lib/note-editor';
 import type { ExportScope, Group, Mode, Tool } from '../lib/types';
 import { Button } from './Button';
+import { NoteEditor } from './NoteEditor';
 
 export type Menu = 'shape' | 'draw' | 'export' | null;
 interface Props {
@@ -39,8 +42,9 @@ interface Props {
   note: string;
   showNote: boolean;
   focusNote: number;
-  onNoteBlur(): void;
-  setNote(note: string): void;
+  noteEditor: Bridge['noteEditor'];
+  theme: 'light' | 'dark';
+  onNoteEvent(event: NoteEvent): void;
   menu: Menu;
   setMenu(menu: Menu): void;
   size: number;
@@ -61,7 +65,6 @@ export function Toolbar(props: Props) {
   const [filterMenu, setFilterMenu] = useState<'color' | 'number' | null>(null);
   const { scope, setScope } = props;
   const colorInput = useRef<HTMLInputElement>(null);
-  const textarea = useRef<HTMLTextAreaElement>(null);
   const notePanel = useRef<HTMLDivElement>(null);
   const previousGroupId = useRef(activeGroupId);
   const addColor = useRef(props.addColor);
@@ -87,15 +90,6 @@ export function Toolbar(props: Props) {
     if (tool === 'box' || tool === 'polygon') setShape(tool);
     if (tool === 'pencil' || tool === 'brush') setDraw(tool);
   }, [tool]);
-  useEffect(() => {
-    if (!props.showNote || !textarea.current) return;
-    textarea.current.style.height = 'auto';
-    if (props.note)
-      textarea.current.style.height = `${Math.min(160, textarea.current.scrollHeight)}px`;
-  }, [props.note, props.showNote]);
-  useEffect(() => {
-    if (props.focusNote) textarea.current?.focus();
-  }, [props.focusNote]);
   useEffect(() => {
     const changed = previousGroupId.current !== activeGroupId;
     previousGroupId.current = activeGroupId;
@@ -138,29 +132,16 @@ export function Toolbar(props: Props) {
     <div className="dock" data-qritique-ui="" onPointerDown={(event) => event.stopPropagation()}>
       {props.showNote && (
         <div ref={notePanel} className="note-panel panel">
-          <textarea
-            ref={textarea}
-            aria-label="Note for selected group"
-            placeholder="Add note"
-            value={props.note}
-            rows={1}
-            spellCheck={false}
-            onChange={(event) => {
-              props.setNote(event.target.value);
-              event.target.style.height = 'auto';
-              event.target.style.height = `${Math.min(160, event.target.scrollHeight)}px`;
+          <NoteEditor
+            editor={props.noteEditor}
+            state={{
+              groupId: activeGroupId,
+              note: props.note,
+              focus: props.focusNote,
+              theme: props.theme,
+              closeShortcuts: props.keybindings.close,
             }}
-            onBlur={props.onNoteBlur}
-            onKeyDown={(event) => {
-              if (
-                event.key === 'Escape' ||
-                (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing)
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                textarea.current?.blur();
-              }
-            }}
+            receive={props.onNoteEvent}
           />
         </div>
       )}
@@ -540,7 +521,9 @@ export function Toolbar(props: Props) {
                 role="menuitem"
                 size="menu"
                 title={`${toolTitle('Copy image', 'copyImage')} · Shift-click to save PNG`}
-                onClick={(event) => props.onExport(event.shiftKey ? 'save' : 'image', scope)}
+                onClick={(event) => {
+                  if (event.isTrusted) props.onExport(event.shiftKey ? 'save' : 'image', scope);
+                }}
               >
                 <Image size={15} />
                 Copy image
@@ -549,7 +532,9 @@ export function Toolbar(props: Props) {
                 role="menuitem"
                 size="menu"
                 title={toolTitle('Copy notes', 'copyNotes')}
-                onClick={() => props.onExport('notes', scope)}
+                onClick={(event) => {
+                  if (event.isTrusted) props.onExport('notes', scope);
+                }}
               >
                 <List size={15} />
                 Copy notes
