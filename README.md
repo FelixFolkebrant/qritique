@@ -18,7 +18,7 @@
 - Mark areas with boxes, polygons, pencil strokes, or a brush.
 - Group feedback by color or number and add a note to each group.
 - Inspect page elements or move them to suggest layout changes.
-- Copy a full-page image and a prompt, filtered to the feedback you want to share.
+- Copy an image cropped around your marks and a prompt, filtered to the feedback you want to share.
 
 Feedback is stored locally per page. The extension does not use an account, analytics, or a server.
 
@@ -51,7 +51,11 @@ Click the extension icon or press **Alt+Shift+Q** to open qritique. Choose a too
 | Copy image / notes | `Ctrl` or `Cmd` + `C` / `Shift` + `C` |
 | Settings | `?` |
 
-Shortcuts can be changed in settings. Browser-internal and extension-store pages cannot be annotated. Full-page capture may need another attempt on pages that change while being captured.
+Images include the selected marks with 48 pixels of surrounding context. Distant sections are stacked in reading order with a small gap; overlapping sections are combined. Nearby marks share viewport screenshots, and unmarked gaps are skipped. Move annotations include both the original and proposed positions. Mark an area before exporting an image; notes can be copied without marks.
+
+Capture briefly scrolls to the selected sections and restores your position afterward. Keep the annotated tab active during export. Pages that change while being captured may need another attempt.
+
+Shortcuts can be changed in settings. Browser-internal and extension-store pages cannot be annotated.
 
 ## Development
 
