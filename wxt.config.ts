@@ -9,6 +9,7 @@ export default defineConfig({
     name: 'Qritique',
     description: 'Mark a website. Add your notes. Copy visual feedback for your next iteration.',
     permissions: ['activeTab', 'scripting', 'storage', 'clipboardWrite'],
+    incognito: 'not_allowed',
     web_accessible_resources: [{ resources: ['notes.html'], matches: ['<all_urls>'] }],
     action: { default_title: 'Start / stop Qritique' },
     commands: {

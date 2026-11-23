@@ -583,6 +583,13 @@ test('installed overlay protects notes and ignores synthetic page actions', asyn
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
       'Edited after the background stopped',
     );
+    const htmlNote = '<img src=x onerror="document.body.dataset.injected=true">';
+    await note.fill(htmlNote);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Control+Shift+c');
+    await expect(page.getByRole('status')).toHaveText('Copied notes');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(htmlNote);
+    expect(await page.evaluate(() => document.body.dataset.injected)).toBeUndefined();
   } finally {
     await context.close();
     await rm(temp, { recursive: true, force: true });

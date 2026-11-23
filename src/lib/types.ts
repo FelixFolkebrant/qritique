@@ -88,7 +88,9 @@ export function isSession(value: unknown): value is Session {
   if (
     session.version !== 1 ||
     !Array.isArray(session.groups) ||
-    !Array.isArray(session.annotations)
+    !Array.isArray(session.annotations) ||
+    session.groups.length > 1000 ||
+    session.annotations.length > 10000
   )
     return false;
   const validGroups = session.groups.every(
@@ -101,7 +103,14 @@ export function isSession(value: unknown): value is Session {
       /^#[\da-f]{6}$/i.test(g.color) &&
       ['color', 'number'].includes(g.kind),
   );
-  if (!validGroups || !session.groups.some((g) => g.kind === 'number')) return false;
+  if (
+    !validGroups ||
+    !session.groups.some((g) => g.kind === 'number') ||
+    new Set(session.groups.map((group) => group.id)).size !== session.groups.length ||
+    new Set(session.annotations.map((annotation) => annotation?.id)).size !==
+      session.annotations.length
+  )
+    return false;
   return (
     ['color', 'number'].includes(session.mode) &&
     session.groups.some((g) => g.id === session.activeGroupId) &&
@@ -112,6 +121,7 @@ export function isSession(value: unknown): value is Session {
         session.groups.some((g) => g.id === a.groupId) &&
         ['box', 'polygon', 'pencil', 'brush', 'element', 'move'].includes(a.tool) &&
         Array.isArray(a.points) &&
+        a.points.length <= 100000 &&
         a.points.every((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)) &&
         a.bounds &&
         [a.bounds.x, a.bounds.y, a.bounds.width, a.bounds.height, a.size].every(Number.isFinite) &&

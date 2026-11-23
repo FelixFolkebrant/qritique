@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import type { Keybindings } from './keybindings';
+import { type Keybindings, shortcutActions } from './keybindings';
 import type { Theme } from './theme';
 import { isSession, type Session } from './types';
 
@@ -26,8 +26,29 @@ export async function handleStorage(message: StorageMessage, senderUrl: string) 
   const key = storageKey(message.name, senderUrl);
   if (message.type === 'qritique:load')
     return { value: (await browser.storage.local.get(key))[key] };
-  if (message.name === 'session' && !isSession(message.value))
-    throw new Error('Invalid annotation session.');
+  const value: unknown = message.value;
+  let valid = false;
+  if (message.name === 'session') valid = isSession(value);
+  else if (message.name === 'theme') valid = ['system', 'light', 'dark'].includes(value as string);
+  else if (message.name === 'palette')
+    valid =
+      Array.isArray(value) &&
+      value.length <= 5 &&
+      value.every((color) => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color));
+  else if (message.name === 'keybindings')
+    valid =
+      Boolean(value && typeof value === 'object' && !Array.isArray(value)) &&
+      shortcutActions.every((action) => {
+        const keys = (value as Keybindings)[action];
+        return (
+          Array.isArray(keys) &&
+          keys.length <= 64 &&
+          keys.every((shortcut) => typeof shortcut === 'string' && shortcut.length <= 100)
+        );
+      });
+  if (!valid) throw new Error(`Invalid ${message.name} data.`);
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 4 * 1024 * 1024)
+    throw new Error('Saved feedback is too large. Remove some marks or notes and try again.');
   await browser.storage.local.set({ [key]: message.value });
   return { ok: true };
 }

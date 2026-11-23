@@ -1,9 +1,8 @@
 import type { Bridge } from './bridge';
 import { elementBounds, resolveElement } from './elements';
 import { translateAnnotation } from './geometry';
+import { MAX_IMAGE_PIXELS } from './messages';
 import type { Annotation, Bounds } from './types';
-
-const MAX_IMAGE_PIXELS = 16_000_000;
 
 export function captureBounds(
   annotations: Annotation[],

@@ -48,7 +48,7 @@ export function connectNoteEditors() {
     const match = /^qritique:note-(host|frame):([\da-f-]{36})$/.exec(port.name);
     if (!match) return;
     const sender = port.sender;
-    if (sender?.id !== browser.runtime.id || sender.tab?.id == null) {
+    if (sender?.id !== browser.runtime.id || sender.tab?.id == null || sender.tab.incognito) {
       port.disconnect();
       return;
     }

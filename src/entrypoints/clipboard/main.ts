@@ -1,10 +1,17 @@
 import { browser } from 'wxt/browser';
 import { copyImageLocally } from '../../lib/bridge';
+import { isClipboardMessage } from '../../lib/messages';
 import type { Message } from '../../lib/types';
 
 browser.runtime.onMessage.addListener(
-  (message: Message & { target?: string }, _sender, sendResponse) => {
-    if (message.target !== 'clipboard') return;
+  (message: Message & { target?: string }, sender, sendResponse) => {
+    if (
+      message?.target !== 'clipboard' ||
+      sender.id !== browser.runtime.id ||
+      sender.tab ||
+      !isClipboardMessage(message)
+    )
+      return;
     void (async () => {
       for (let attempt = 0; attempt < 20 && !document.hasFocus(); attempt++) {
         window.focus();
