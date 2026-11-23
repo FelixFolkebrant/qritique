@@ -1,6 +1,6 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "../assets/theme.css";
-@source "../components";
+@source "../";
 
 :host {
   all: initial !important;

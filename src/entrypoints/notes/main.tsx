@@ -39,6 +39,7 @@ let connection: { port: Port; channelId: string } | undefined;
 let authorized = false;
 let connected = false;
 window.addEventListener('message', (event) => {
+  if (event.source !== window.parent) return;
   if (connected) return;
   if (
     event.data?.type === 'qritique:note-channel' &&

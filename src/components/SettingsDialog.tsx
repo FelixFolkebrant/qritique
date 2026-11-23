@@ -1,6 +1,6 @@
 import { Keyboard, Monitor, Moon, Plus, RotateCcw, Sun, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import wideLogo from '../../public/IconWide.svg?raw';
+import wideLogo from '../assets/logo.svg?raw';
 import {
   defaultKeybindings,
   type Keybindings,

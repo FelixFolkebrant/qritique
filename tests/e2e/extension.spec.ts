@@ -2,14 +2,16 @@ import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium, expect, test } from '@playwright/test';
+import { emptySession } from '../../src/lib/types';
 
 declare const chrome: typeof import('wxt/browser').browser;
 
-async function launchExtension() {
+async function launchExtension(deviceScaleFactor = 1) {
   const temp = await mkdtemp(path.join(tmpdir(), 'qritique-extension-'));
   const extension = path.join(temp, 'extension');
   await cp(path.resolve('.output/chrome-mv3'), extension, { recursive: true });
   const manifest = JSON.parse(await readFile(path.join(extension, 'manifest.json'), 'utf8'));
+  expect(manifest.permissions).not.toContain('debugger');
   // Automation cannot press the browser's action icon to grant activeTab. The test-only
   // copy grants host access so the built content script and real capture API can run.
   manifest.host_permissions = ['<all_urls>'];
@@ -17,13 +19,18 @@ async function launchExtension() {
   const context = await chromium.launchPersistentContext(path.join(temp, 'profile'), {
     channel: 'chromium',
     headless: true,
-    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
-    viewport: { width: 1200, height: 800 },
+    args: [
+      `--disable-extensions-except=${extension}`,
+      `--load-extension=${extension}`,
+      '--window-size=1200,887',
+      `--force-device-scale-factor=${deviceScaleFactor}`,
+    ],
+    viewport: null,
   });
   return { temp, context };
 }
 
-test('installed Chrome build captures all marks across the full page without the toolbar', async ({
+test('installed Chrome build captures only marked screens and stacks separate sections', async ({
   browserName,
 }) => {
   test.skip(
@@ -46,23 +53,59 @@ test('installed Chrome build captures all marks across the full page without the
       });
     });
     await expect(page.getByRole('toolbar')).toBeVisible();
+    await page.evaluate(() => {
+      document.body.style.minHeight = '12000px';
+    });
+    await worker.evaluate(() => {
+      Reflect.set(globalThis, 'qritiqueCaptureCount', 0);
+      chrome.runtime.onMessage.addListener((message) => {
+        if (message?.type === 'qritique:capture')
+          Reflect.set(
+            globalThis,
+            'qritiqueCaptureCount',
+            Number(Reflect.get(globalThis, 'qritiqueCaptureCount')) + 1,
+          );
+      });
+    });
     await page.mouse.move(70, 120);
     await page.mouse.down();
     await page.mouse.move(400, 300, { steps: 8 });
     await page.mouse.up();
     await page.evaluate(() => scrollTo(0, 1300));
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(1300);
+    await page.getByRole('button', { name: 'Red', exact: true }).click();
     await page.mouse.move(70, 220);
     await page.mouse.down();
     await page.mouse.move(400, 400, { steps: 8 });
     await page.mouse.up();
     await expect(page.locator('[data-annotation-id]')).toHaveCount(2);
+    // Put the controls inside the crop so their absence is checked in the exported pixels.
+    await page.locator('.dock').evaluate((element) => {
+      Object.assign((element as HTMLElement).style, {
+        top: '300px',
+        bottom: 'auto',
+        left: '220px',
+        transform: 'none',
+      });
+    });
+    await page.evaluate(() => {
+      document.documentElement.dataset.captureScrolls = '0';
+      window.addEventListener('scroll', () => {
+        document.documentElement.dataset.captureScrolls = String(
+          Number(document.documentElement.dataset.captureScrolls) + 1,
+        );
+      });
+    });
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('menuitem', { name: 'Copy image' }).click({ modifiers: ['Shift'] });
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe('qritique-localhost.png');
     const bytes = await readFile((await download.path())!);
+    await download.saveAs('/tmp/qritique-export-verified.png');
+    await download.saveAs(test.info().outputPath('export.png'));
+    expect(await worker.evaluate(() => Reflect.get(globalThis, 'qritiqueCaptureCount'))).toBe(2);
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(1300);
     const pixels = await page.evaluate(
       async (dataUrl) => {
         const image = new Image();
@@ -77,24 +120,37 @@ test('installed Chrome build captures all marks across the full page without the
         return {
           width: image.width,
           height: image.height,
-          first: pixel(90, 140),
-          second: pixel(90, 1540),
-          dock: pixel(600, 760),
-          headerDuplicate: pixel(600, 820),
+          first: pixel(68, 68),
+          second: pixel(68, 368),
+          context: pixel(5, 5),
+          controls: pixel(408, 438),
+          separator: pixel(200, 288),
         };
       },
       `data:image/png;base64,${bytes.toString('base64')}`,
     );
-    expect(pixels.width).toBe(1200);
-    expect(pixels.height).toBe(2250);
+    expect(pixels.width).toBe(426);
+    expect(pixels.height).toBe(576);
     expect(pixels.first[2]!).toBeGreaterThan(pixels.first[0]!);
-    expect(pixels.second[2]!).toBeGreaterThan(pixels.second[0]!);
-    expect(pixels.dock.slice(0, 3)).toEqual([242, 241, 237]);
-    expect(pixels.headerDuplicate.slice(0, 3)).toEqual([242, 241, 237]);
-    await expect.poll(() => page.evaluate(() => scrollY)).toBe(1300);
+    expect(pixels.second[0]!).toBeGreaterThan(pixels.second[2]!);
+    expect(pixels.context.slice(0, 3)).toEqual([242, 241, 237]);
+    expect(pixels.controls.slice(0, 3)).toEqual([216, 221, 211]);
+    expect(pixels.separator.slice(0, 3)).toEqual([255, 255, 255]);
+    await expect(page.locator('header')).toBeVisible();
     await expect(page.getByRole('status')).toHaveText('Image saved');
     expect(errors).toEqual([]);
-    await download.saveAs('/tmp/qritique-export-verified.png');
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('button', { name: 'Filter colors', exact: true }).click();
+    await page
+      .getByRole('group', { name: 'Colors', exact: true })
+      .getByRole('button', { name: 'Red', exact: true })
+      .click();
+    const filteredDownload = page.waitForEvent('download');
+    await page.getByRole('menuitem', { name: 'Copy image' }).click({ modifiers: ['Shift'] });
+    const filteredBytes = await readFile((await (await filteredDownload).path())!);
+    expect(filteredBytes.readUInt32BE(16)).toBe(426);
+    expect(filteredBytes.readUInt32BE(20)).toBe(276);
+    expect(await worker.evaluate(() => Reflect.get(globalThis, 'qritiqueCaptureCount'))).toBe(3);
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
       origin: 'http://localhost:5173',
     });
@@ -153,6 +209,186 @@ test('installed Chrome build captures all marks across the full page without the
     await toggle();
     await expect(page.getByRole('toolbar')).toBeVisible();
     await expect(page.locator('[data-annotation-id]')).toHaveCount(2);
+  } finally {
+    await context.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('viewport capture keeps cropped marks aligned on high-density displays', async ({
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'Uses the installed Chromium extension.');
+  const { temp, context } = await launchExtension(2);
+  try {
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const page = await context.newPage();
+    await page.goto('http://localhost:5173/tests/fixture.html');
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        files: ['/content-scripts/annotate.js'],
+      });
+    });
+    await expect(page.getByRole('toolbar')).toBeVisible();
+    await page.evaluate(() => scrollTo(0, 1300));
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(1300);
+    await page.mouse.move(70, 220);
+    await page.mouse.down();
+    await page.mouse.move(400, 400, { steps: 8 });
+    await page.mouse.up();
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('menuitem', { name: 'Copy image' }).click({ modifiers: ['Shift'] });
+    const bytes = await readFile((await (await download).path())!);
+    expect(bytes.readUInt32BE(16)).toBe(852);
+    expect(bytes.readUInt32BE(20)).toBe(552);
+    const pixels = await page.evaluate(
+      async (uri) => {
+        const image = new Image();
+        image.src = uri;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(image, 0, 0);
+        return {
+          mark: [...ctx.getImageData(136, 136, 1, 1).data],
+          context: [...ctx.getImageData(10, 10, 1, 1).data],
+        };
+      },
+      `data:image/png;base64,${bytes.toString('base64')}`,
+    );
+    expect(pixels.mark[2]!).toBeGreaterThan(pixels.mark[0]!);
+    expect(pixels.context.slice(0, 3)).toEqual([242, 241, 237]);
+    expect(await page.evaluate(() => scrollY)).toBe(1300);
+  } finally {
+    await context.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('a large marked section is stitched using only the three required screens', async ({
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'Uses the installed Chromium extension.');
+  const { temp, context } = await launchExtension();
+  try {
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const page = await context.newPage();
+    await page.goto('http://localhost:5173/tests/fixture.html');
+    const session = emptySession();
+    session.annotations.push({
+      id: 'large',
+      groupId: 'teal',
+      tool: 'box',
+      points: [],
+      size: 24,
+      bounds: { x: 70, y: 120, width: 330, height: 1600 },
+    });
+    await worker.evaluate(async (session) => {
+      await chrome.storage.local.set({
+        'qritique:http://localhost:5173/tests/fixture.html': session,
+      });
+      Reflect.set(globalThis, 'qritiqueCaptureCount', 0);
+      chrome.runtime.onMessage.addListener((message) => {
+        if (message?.type === 'qritique:capture')
+          Reflect.set(
+            globalThis,
+            'qritiqueCaptureCount',
+            Number(Reflect.get(globalThis, 'qritiqueCaptureCount')) + 1,
+          );
+      });
+      const [tab] = await chrome.tabs.query({ active: true });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        files: ['/content-scripts/annotate.js'],
+      });
+    }, session);
+    await expect(page.locator('[data-annotation-id]')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('menuitem', { name: 'Copy image' }).click({ modifiers: ['Shift'] });
+    const bytes = await readFile((await (await download).path())!);
+    expect(bytes.readUInt32BE(16)).toBe(426);
+    expect(bytes.readUInt32BE(20)).toBe(1696);
+    expect(await worker.evaluate(() => Reflect.get(globalThis, 'qritiqueCaptureCount'))).toBe(3);
+    const pixels = await page.evaluate(
+      async (uri) => {
+        const image = new Image();
+        image.src = uri;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(image, 0, 0);
+        return [799, 800, 1599, 1600].map((y) =>
+          [...ctx.getImageData(408, y, 1, 1).data].slice(0, 3),
+        );
+      },
+      `data:image/png;base64,${bytes.toString('base64')}`,
+    );
+    expect(pixels).toEqual([
+      [242, 241, 237],
+      [242, 241, 237],
+      [216, 221, 211],
+      [216, 221, 211],
+    ]);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+  } finally {
+    await context.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('image export reports missing marks and restores controls after capture failure', async ({
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'Uses the installed Chromium extension.');
+  const { temp, context } = await launchExtension();
+  try {
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const page = await context.newPage();
+    await page.goto('http://localhost:5173/tests/fixture.html');
+    await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab!.id! },
+        files: ['/content-scripts/annotate.js'],
+      });
+    });
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Copy image' }).click();
+    await expect(page.getByRole('status')).toContainText('Mark an area');
+    await expect(page.getByRole('toolbar')).toBeVisible();
+    await page.mouse.move(70, 120);
+    await page.mouse.down();
+    await page.mouse.move(400, 300, { steps: 8 });
+    await page.mouse.up();
+    await page.evaluate(() => scrollTo(0, 1300));
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(1300);
+    await worker.evaluate(() => {
+      const capture = chrome.tabs.captureVisibleTab;
+      chrome.tabs.captureVisibleTab = (() => {
+        chrome.tabs.captureVisibleTab = capture;
+        throw new Error('Capture canceled');
+      }) as typeof capture;
+    });
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Copy image' }).click();
+    await expect(page.getByRole('status')).toContainText('Capture canceled');
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(1300);
+    await expect(page.locator('header')).toBeVisible();
+    await expect(page.getByRole('toolbar')).toBeVisible();
+    await expect(page.locator('[data-annotation-id]')).toBeVisible();
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('menuitem', { name: 'Copy image' }).click({ modifiers: ['Shift'] });
+    await download;
+    await expect(page.getByRole('status')).toHaveText('Image saved');
   } finally {
     await context.close();
     await rm(temp, { recursive: true, force: true });
@@ -347,6 +583,13 @@ test('installed overlay protects notes and ignores synthetic page actions', asyn
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
       'Edited after the background stopped',
     );
+    const htmlNote = '<img src=x onerror="document.body.dataset.injected=true">';
+    await note.fill(htmlNote);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Control+Shift+c');
+    await expect(page.getByRole('status')).toHaveText('Copied notes');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(htmlNote);
+    expect(await page.evaluate(() => document.body.dataset.injected)).toBeUndefined();
   } finally {
     await context.close();
     await rm(temp, { recursive: true, force: true });

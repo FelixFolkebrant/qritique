@@ -13,6 +13,48 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('toolbar', { name: 'Annotation tools' })).toBeVisible();
 });
 
+test('closing the overlay resumes page animations and stops observing new content', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const element = document.createElement('div');
+    element.id = 'animated-page-content';
+    document.body.append(element);
+    Reflect.set(
+      window,
+      'qritiqueAnimation',
+      element.animate([{ opacity: 1 }, { opacity: 0.2 }], { duration: 1000, iterations: Infinity }),
+    );
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < 1000; i++) fragment.append(document.createElement('span'));
+    element.append(fragment);
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => (Reflect.get(window, 'qritiqueAnimation') as Animation).playState),
+    )
+    .toBe('paused');
+  await page.keyboard.press('Control+Escape');
+  await expect(page.getByRole('toolbar', { name: 'Annotation tools' })).toHaveCount(0);
+  expect(
+    await page.evaluate(() => (Reflect.get(window, 'qritiqueAnimation') as Animation).playState),
+  ).toBe('running');
+  expect(
+    await page.evaluate(async () => {
+      const element = document.createElement('div');
+      document.body.append(element);
+      const animation = element.animate([{ opacity: 1 }, { opacity: 0.2 }], {
+        duration: 1000,
+        iterations: Infinity,
+      });
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      return animation.playState;
+    }),
+  ).toBe('running');
+});
+
 test('box marks stay anchored on scroll, save with notes, and support undo and deletion', async ({
   page,
 }) => {

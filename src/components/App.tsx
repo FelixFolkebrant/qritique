@@ -623,7 +623,10 @@ export function App({ host, bridge, initial, onClose }: Props) {
       } else {
         captureLock.current = true;
         uiRoot.current?.style.setProperty('display', 'none');
-        const capture = await capturePage(bridge, session.annotations, host);
+        const annotations = session.annotations.filter(
+          (a) => scope === 'all' || scope.includes(a.groupId),
+        );
+        const capture = await capturePage(bridge, annotations, host);
         uiRoot.current?.style.removeProperty('display');
         captureLock.current = false;
         const image = await composeImage(

@@ -4,11 +4,28 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
+  zip: {
+    includeSources: [
+      'src/**',
+      'public/**',
+      'scripts/**',
+      'docs/PRIVACY.md',
+      '*.json',
+      '*.ts',
+      '*.yaml',
+      '*.yml',
+      'README.md',
+      'BUILD-FIREFOX.md',
+      'LICENSE',
+      '.gitignore',
+    ],
+  },
   vite: () => ({ plugins: [tailwindcss()] }),
   manifest: ({ browser }) => ({
     name: 'Qritique',
     description: 'Mark a website. Add your notes. Copy visual feedback for your next iteration.',
     permissions: ['activeTab', 'scripting', 'storage', 'clipboardWrite'],
+    incognito: 'not_allowed',
     web_accessible_resources: [{ resources: ['notes.html'], matches: ['<all_urls>'] }],
     action: { default_title: 'Start / stop Qritique' },
     commands: {
@@ -24,7 +41,7 @@ export default defineConfig({
         ? {
             gecko: {
               id: 'qritique@qritique.local',
-              strict_min_version: '128.0',
+              strict_min_version: '140.0',
               data_collection_permissions: { required: ['none'] },
             },
           }

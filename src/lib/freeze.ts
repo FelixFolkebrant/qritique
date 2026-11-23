@@ -19,12 +19,18 @@ export function freezePage(host: HTMLElement): () => void {
     }
   };
   pause();
+  let frame = 0;
   const observer = new MutationObserver((records) => {
-    if (records.some((r) => !host.contains(r.target) && r.target !== host)) pause();
+    if (frame || !records.some((r) => !host.contains(r.target) && r.target !== host)) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      pause();
+    });
   });
   observer.observe(document.body, { childList: true, subtree: true });
   return () => {
     observer.disconnect();
+    cancelAnimationFrame(frame);
     style.remove();
     for (const animation of animations) {
       try {
